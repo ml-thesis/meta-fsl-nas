@@ -19,6 +19,10 @@ Based on https://github.com/khanrc/pt.darts
 which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
 """
+
+
+
+
 import datetime
 import fcntl
 import time
@@ -27,12 +31,9 @@ import os
 import shutil
 import tempfile
 from collections import OrderedDict
-
 import numpy as np
 import torch
 import torch.nn as nn
-
-
 def set_hyperparameter(config):
     """Load/set hyperparameter settings based on predefined config"""
 
@@ -131,7 +132,7 @@ def get_experiment_path(config):
     current_time = datetime.datetime.now().time()
     experiment_group_dir = os.path.join("experiments", config.experiment_group)
     os.makedirs(experiment_group_dir, exist_ok=True)
-    experiment_name = f"{current_date}_{config.name}_"  
+    experiment_name = f"{current_date}_{config.name}_"
 
     if config.job_id:
         experiment_name = f"{experiment_name}{config.job_id}"
@@ -230,7 +231,10 @@ def accuracy(output, target, topk=(1,)):
 
     res = []
     for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
+        # Originally, view(-1) is used to reshape,
+        # however this caused problems for two dimensional
+        # array e.g. (5, 20)
+        correct_k = correct[:k].reshape(-1).float().sum(0)
         res.append(correct_k.mul_(1.0 / batch_size))
 
     return res
@@ -273,7 +277,8 @@ def save_state(
 
     # save the model (to temporary path if job_id is specified then then rename)
     model_file = epochpath + "meta_state"
-    model_file_tmp = model_file if job_id is None else model_file + f"_{job_id}"
+    model_file_tmp = model_file if job_id is None else model_file + \
+        f"_{job_id}"
     torch.save(
         {
             "meta_model": meta_model.state_dict(),

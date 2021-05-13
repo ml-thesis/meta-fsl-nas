@@ -31,12 +31,16 @@ args=(
     --meta_model_prune_threshold 0.01 \
     --alpha_prune_threshold 0.01 \
     # Meta Learning
+    # Original settings 30_000 meta epochs
+    # warm_up_epochs 15_000
     --meta_model searchcnn \
-    --meta_epochs 30000 \
-    --warm_up_epochs 15000 \
+    --meta_epochs 30 \
+    --warm_up_epochs 15 \
     --use_pairwise_input_alphas \
-    --eval_freq 2500 \
-    --eval_epochs 200 \
+    # --eval_freq 2500 \
+    --eval_freq 2 \
+    # --eval_epochs 200 \
+    --eval_epochs 2 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \

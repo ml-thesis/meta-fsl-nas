@@ -18,16 +18,15 @@ which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
 """
 
-import copy
 
+
+
+import copy
 import torch
 import torch.nn as nn
 from collections import OrderedDict, namedtuple
-
 from metanas.utils import utils
 from metanas.models.search_cnn import SearchCNNController
-
-
 class Darts:
     def __init__(self, model, config, do_schedule_lr=False):
 
@@ -39,7 +38,6 @@ class Darts:
         self.warm_up_epochs = config.warm_up_epochs
 
         # weights optimizer
-
         self.w_optim = torch.optim.Adam(
             self.model.weights(),
             lr=self.config.w_lr,
@@ -115,7 +113,8 @@ class Darts:
         if model_has_normalizer:
             self.model.normalizer["params"]["curr_step"] = 0.0
             self.architect.v_net.normalizer["params"]["curr_step"] = 0.0
-            self.model.normalizer["params"]["max_steps"] = float(arch_adap_steps)
+            self.model.normalizer["params"]["max_steps"] = float(
+                arch_adap_steps)
             self.architect.v_net.normalizer["params"]["max_steps"] = float(
                 arch_adap_steps
             )
@@ -125,7 +124,8 @@ class Darts:
             if not test_phase or self.config.use_drop_path_in_meta_testing:
                 self.model.drop_path_prob(self.config.drop_path_prob)
 
-        for train_step in range(train_steps):  # task train_steps = epochs per task
+        # task train_steps = epochs per task
+        for train_step in range(train_steps):
 
             warm_up = (
                 epoch < self.warm_up_epochs
@@ -282,7 +282,8 @@ def train(
         if not warm_up:  # only update alphas outside warm up phase
             alpha_optim.zero_grad()
             if config.do_unrolled_architecture_steps:
-                architect.virtual_step(train_X, train_y, lr, w_optim)  # (calc w`)
+                architect.virtual_step(
+                    train_X, train_y, lr, w_optim)  # (calc w`)
             architect.backward(train_X, train_y, val_X, val_y, lr, w_optim)
 
             alpha_optim.step()
@@ -338,7 +339,8 @@ class Architect:
             # dict key is not the value, but the pointer. So original network weight have to
             # be iterated also.
             for w, vw, g in zip(self.net.weights(), self.v_net.weights(), gradients):
-                m = w_optim.state[w].get("momentum_buffer", 0.0) * self.w_momentum
+                m = w_optim.state[w].get(
+                    "momentum_buffer", 0.0) * self.w_momentum
                 vw.copy_(w - xi * (m + g + self.w_weight_decay * w))
 
             # synchronize alphas
@@ -359,7 +361,7 @@ class Architect:
         v_weights = tuple(self.v_net.weights())
         v_grads = torch.autograd.grad(loss, v_alphas + v_weights)
         dalpha = v_grads[: len(v_alphas)]
-        dw = v_grads[len(v_alphas) :]
+        dw = v_grads[len(v_alphas):]
 
         if self.use_first_order_darts:  # use first oder approximation for darts
 
