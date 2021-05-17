@@ -42,6 +42,28 @@ def meta_architecture_search(
 ):
     config.logger.info("Start meta architecture search")
 
+    # TODO: Move these configurations to argparse
+    # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
+    # DARTS in the initial stage.
+    config.architecture_stages = 3
+
+    # TODO: Configure and implement in DARTS.
+    # The number of operations preserved on each edge of the super-network are,
+    # 8, 5, and 3 for stage 1, 2 and 3, respectively.
+    # operations_preserved = [8, 5, 3]
+    config.operations_preserved = [8, 5, 3]
+    # Discovered cells are allowed to keep M=2, skip connections.
+    # Use these for my experiment
+    # M = 2
+    config.number_of_skip_connections = 2
+    # Each stage, the super-network is trained for 25 epochs (batch size 96).
+    # Warm-start/only tuning network parameters in first 10 epochs.
+    # Finally, the number of normal cells in the network increases in these
+    # three stages, to 5, 11, 17, respectively.
+    # normal_cells = [5, 11, 17]
+    # config.number_of_normal_cells = [5, 11, 17]
+    config.add_layers = 6
+
     # set default gpu device id
     torch.cuda.set_device(config.gpus[0])
 
@@ -78,7 +100,7 @@ def meta_architecture_search(
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
     # task distribution
-    # Adjusted to download=True, to force the download
+    # TODO: Adjusted to download=True, to force the download configure this
     task_distribution = task_distribution_class(config, download=True)
 
     # meta model
@@ -122,6 +144,7 @@ def meta_architecture_search(
             task_distribution,
             task_optimizer,
             meta_optimizer,
+            normalizer,
             train_info,
         )
 
@@ -351,7 +374,8 @@ def train(
     task_distribution,
     task_optimizer,
     meta_optimizer,
-    train_info=None,
+    normalizer=None,
+    train_info=None
 ):
     """Meta-training loop
 
@@ -361,6 +385,7 @@ def train(
         task_distribution: Task distribution object
         task_optimizer: A pytorch optimizer for task training
         meta_optimizer: A pytorch optimizer for meta training
+        normalizer: To be able to reinit the task optimizer for staging
         train_info: Dictionary that is added to the experiment.pickle file in addition to training
             internal data.
 
@@ -407,7 +432,28 @@ def train(
 
         sample_time.update(time_samp - time_es)
 
-        # Each task starts with the current meta state
+        # P-DARTS, addition of staging
+        current_stage = config.architecture_stages * \
+            meta_epoch // config.meta_epochs
+
+        # When we enter a new stage, G_k, we reinitialize the weights
+        # and architecture parameters as we've just removed an operation o_i
+        if current_stage > config.architecture_stages * \
+                meta_epoch-1 // config.meta_epochs:
+
+            config.layers += config.add_layers
+
+            meta_model = _build_model(config, task_distribution, normalizer)
+
+            # task & meta optimizer
+            config, meta_optimizer = _init_meta_optimizer(
+                config, meta_optimizer, meta_model
+            )
+            config, task_optimizer = _init_task_optimizer(
+                config, task_optimizer, meta_model
+            )
+
+            # Each task starts with the current meta state
         meta_state = copy.deepcopy(meta_model.state_dict())
         global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
         task_infos = []

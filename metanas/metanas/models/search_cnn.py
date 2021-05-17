@@ -21,19 +21,18 @@ cf. 3rd-party-licenses.txt in root directory.
 """
 
 
+
+
 import functools
 import logging
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parallel._functions import Broadcast
 import scipy.special
 import copy
-
 from metanas.models import ops
 from metanas.utils import genotypes as gt
-
 def SoftMax(logits, params, dim=-1):
 
     # temperature annealing
@@ -127,8 +126,10 @@ class SearchCNNController(nn.Module):
 
         for i in range(n_nodes):
             # create alpha parameters over parallel operations
-            self.alpha_normal.append(nn.Parameter(1e-3 * torch.randn(i + 2, n_ops)))
-            self.alpha_reduce.append(nn.Parameter(1e-3 * torch.randn(i + 2, n_ops)))
+            self.alpha_normal.append(nn.Parameter(
+                1e-3 * torch.randn(i + 2, n_ops)))
+            self.alpha_reduce.append(nn.Parameter(
+                1e-3 * torch.randn(i + 2, n_ops)))
 
         assert not (
             use_hierarchical_alphas and use_pairwise_input_alphas
@@ -147,8 +148,10 @@ class SearchCNNController(nn.Module):
             self.alpha_in_reduce = nn.ParameterList()
 
             for i in range(n_nodes):
-                self.alpha_in_normal.append(nn.Parameter(1e-3 * torch.randn(i + 2)))
-                self.alpha_in_reduce.append(nn.Parameter(1e-3 * torch.randn(i + 2)))
+                self.alpha_in_normal.append(
+                    nn.Parameter(1e-3 * torch.randn(i + 2)))
+                self.alpha_in_reduce.append(
+                    nn.Parameter(1e-3 * torch.randn(i + 2)))
 
         elif use_pairwise_input_alphas:
             print("Using pairwise input alphas.")
@@ -158,8 +161,10 @@ class SearchCNNController(nn.Module):
 
             for i in range(n_nodes):
                 num_comb = int(scipy.special.binom(i + 2, 2))
-                self.alpha_pw_normal.append(nn.Parameter(1e-3 * torch.randn(num_comb)))
-                self.alpha_pw_reduce.append(nn.Parameter(1e-3 * torch.randn(num_comb)))
+                self.alpha_pw_normal.append(
+                    nn.Parameter(1e-3 * torch.randn(num_comb)))
+                self.alpha_pw_reduce.append(
+                    nn.Parameter(1e-3 * torch.randn(num_comb)))
 
         # setup alphas list
         self._alphas = []
@@ -183,8 +188,10 @@ class SearchCNNController(nn.Module):
         return self.normalizer["func"](alpha, self.normalizer["params"])
 
     def _get_normalized_alphas(self):
-        weights_normal = [self.apply_normalizer(alpha) for alpha in self.alpha_normal]
-        weights_reduce = [self.apply_normalizer(alpha) for alpha in self.alpha_reduce]
+        weights_normal = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_normal]
+        weights_reduce = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_reduce]
 
         weights_pw_normal = None
         weights_pw_reduce = None
@@ -231,18 +238,21 @@ class SearchCNNController(nn.Module):
                 self.normalizer["params"]["max_steps"] - 1
             )
 
-        weights_normal = [self.apply_normalizer(alpha) for alpha in self.alpha_normal]
-        weights_reduce = [self.apply_normalizer(alpha) for alpha in self.alpha_reduce]
+        weights_normal = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_normal]
+        weights_reduce = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_reduce]
         for idx in range(len(weights_normal)):
             # need to modify data because alphas are leaf variables
-            self.alpha_normal[idx].data[weights_normal[idx] < prune_threshold] = val
-            self.alpha_reduce[idx].data[weights_reduce[idx] < prune_threshold] = val
+            self.alpha_normal[idx].data[weights_normal[idx]
+                                        < prune_threshold] = val
+            self.alpha_reduce[idx].data[weights_reduce[idx]
+                                        < prune_threshold] = val
 
         # set curr_step back to original value
         self.normalizer["params"]["curr_step"] = curr_step_backup
 
     def get_sparse_alphas_pw(self, alpha_prune_threshold=0.0):
-
         """
         Convert alphas to zero-one-vectors under consideration of pairwise alphas
 
@@ -260,7 +270,8 @@ class SearchCNNController(nn.Module):
         weights_normal = [
             self.apply_normalizer(alpha) for alpha in self.alpha_normal
         ]  # get normalized weights
-        weights_reduce = [self.apply_normalizer(alpha) for alpha in self.alpha_reduce]
+        weights_reduce = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_reduce]
 
         weights_pw_normal = [
             self.apply_normalizer(alpha) for alpha in self.alpha_pw_normal
@@ -304,8 +315,7 @@ class SearchCNNController(nn.Module):
                 )
             )
 
-        ### same for reduction
-
+        # same for reduction
         weights_reduce_sparse = list()
 
         for node_idx, node_weights in enumerate(weights_reduce):
@@ -474,15 +484,19 @@ class SearchCNNController(nn.Module):
         wreduce_copies = broadcast_list(weights_reduce, self.device_ids)
 
         if weights_in_normal is not None:
-            wnormal_in_copies = broadcast_list(weights_in_normal, self.device_ids)
-            wreduce_in_copies = broadcast_list(weights_in_reduce, self.device_ids)
+            wnormal_in_copies = broadcast_list(
+                weights_in_normal, self.device_ids)
+            wreduce_in_copies = broadcast_list(
+                weights_in_reduce, self.device_ids)
         else:
             wnormal_in_copies = None
             wreduce_in_copies = None
 
         if weights_pw_normal is not None:
-            wnormal_pw_copies = broadcast_list(weights_pw_normal, self.device_ids)
-            wreduce_pw_copies = broadcast_list(weights_pw_reduce, self.device_ids)
+            wnormal_pw_copies = broadcast_list(
+                weights_pw_normal, self.device_ids)
+            wreduce_pw_copies = broadcast_list(
+                weights_pw_reduce, self.device_ids)
         else:
             wnormal_pw_copies = None
             wreduce_pw_copies = None
@@ -553,8 +567,10 @@ class SearchCNNController(nn.Module):
             raise NotImplementedError
         else:
 
-            gene_normal = gt.parse(self.alpha_normal, k=2, primitives=self.primitives)
-            gene_reduce = gt.parse(self.alpha_reduce, k=2, primitives=self.primitives)
+            gene_normal = gt.parse(
+                self.alpha_normal, k=2, primitives=self.primitives)
+            gene_reduce = gt.parse(
+                self.alpha_reduce, k=2, primitives=self.primitives)
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 
@@ -586,7 +602,8 @@ class SearchCNNController(nn.Module):
 def broadcast_list(l, device_ids):
     """ Broadcasting list """
     l_copies = Broadcast.apply(device_ids, *l)
-    l_copies = [l_copies[i : i + len(l)] for i in range(0, len(l_copies), len(l))]
+    l_copies = [l_copies[i: i + len(l)]
+                for i in range(0, len(l_copies), len(l))]
 
     return l_copies
 
