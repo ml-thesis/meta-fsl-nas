@@ -30,15 +30,6 @@ from metanas.models.search_cnn import SearchCNNController
 class Darts:
     def __init__(self, model, config, do_schedule_lr=False):
 
-        # Stages G_k, as in P-DARTS
-        # For each stage, G_k, the super-network is constructed
-        # with L_k cells (reduction, normal cells) and the operation
-        # space consists of O_k candidate operations, i.e.
-        # |O^k_(i, j)| = O_k.
-        # Operation space currently not considered due to the extra
-        # meta-loop.
-        # self.stages = config.architecture_stages
-
         self.config = config
         self.model = model
         self.do_schedule_lr = do_schedule_lr
@@ -77,12 +68,6 @@ class Darts:
         alpha_logger=None,
         sparsify_input_alphas=None,
     ):
-
-        # TODO: Remove?
-        # Determine stage G_k to determine the amount of cells,
-        # TODO: Currently increase L_k by 1 every stage, match this with
-        #   P-DARTS.
-        # current_stage = self.stages * epoch // self.config.meta_epochs
 
         log_alphas = False
 
@@ -133,12 +118,6 @@ class Darts:
             self.architect.v_net.normalizer["params"]["max_steps"] = float(
                 arch_adap_steps
             )
-
-        # Configure the P-DARTS stages,
-        # config.operations_preserved[current_stage]
-        # # TODO: This might not be the actual criteria
-        # config.number_of_normal_cells[current_stage]
-        # config.number_of_skip_connections
 
         if self.config.drop_path_prob > 0.0:
             # do drop path if not test phase (=in train phase) or if also use in test phase

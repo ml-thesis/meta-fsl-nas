@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DATASET=omniglot
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/metanas/data
+DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/custom/results
 		
 mkdir -p $TRAIN_DIR
@@ -14,7 +14,7 @@ args=(
     --path ${TRAIN_DIR} \
     --data_path ${DATASET_DIR} \
     --dataset $DATASET
-    --hp_setting 'og_metanas' \
+    --hp_setting 'og_test' \
     --use_hp_setting 1 \
     --workers 0 \
     --gpus 0 \
@@ -34,13 +34,15 @@ args=(
     # Original settings 30_000 meta epochs
     # and warm_up_epochs 15_000.
     --meta_model searchcnn \
-    --meta_epochs 75 \
-    --warm_up_epochs 10 \
+    --meta_epochs 5 \
+    --test_task_train_steps 2 \
+
+    --warm_up_epochs 1 \
     --use_pairwise_input_alphas \
     # --eval_freq 2500 \
-    --eval_freq 2 \
+    --eval_freq 5 \
     # --eval_epochs 200 \
-    --eval_epochs 2 \
+    --eval_epochs 1 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \

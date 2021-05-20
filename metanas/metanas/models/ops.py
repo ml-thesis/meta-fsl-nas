@@ -19,12 +19,10 @@ which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
 """
 
+
 import torch
 import torch.nn as nn
-
 from metanas.utils import genotypes as gt
-
-
 OPS = {
     "none": lambda C, stride, affine: Zero(stride),
     "avg_pool_3x3": lambda C, stride, affine: PoolBN(
@@ -47,7 +45,7 @@ OPS = {
     ),
     "dil_conv_3x3": lambda C, stride, affine: DilConv(
         C, C, 3, stride, 2, 2, affine=affine
-    ), 
+    ),
     "dil_conv_5x5": lambda C, stride, affine: DilConv(
         C, C, 5, stride, 4, 2, affine=affine
     ),
@@ -73,7 +71,7 @@ def drop_path_(x, drop_prob, training):
     return x
 
 
-class DropPath_(nn.Module):
+class DropPath(nn.Module):
     def __init__(self, p=0.0):
         """[!] DropPath is inplace module
         Args:
@@ -148,7 +146,8 @@ class FacConv(nn.Module):
             nn.Conv2d(
                 C_in, C_out, (1, kernel_length), stride, (0, padding), bias=False
             ),
-            nn.Conv2d(C_in, C_in, (kernel_length, 1), 1, (padding, 0), bias=False),
+            nn.Conv2d(C_in, C_in, (kernel_length, 1),
+                      1, (padding, 0), bias=False),
             nn.BatchNorm2d(C_out, affine=affine),
         )
 
@@ -199,7 +198,8 @@ class SepConv(nn.Module):
             DilConv(
                 C_in, C_in, kernel_size, stride, padding, dilation=1, affine=affine
             ),
-            DilConv(C_in, C_out, kernel_size, 1, padding, dilation=1, affine=affine),
+            DilConv(C_in, C_out, kernel_size, 1,
+                    padding, dilation=1, affine=affine),
         )
 
     def forward(self, x):
@@ -235,35 +235,67 @@ class FactorizedReduce(nn.Module):
     def __init__(self, C_in, C_out, affine=True):
         super().__init__()
         self.relu = nn.ReLU()
-        self.conv1 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
-        self.conv2 = nn.Conv2d(C_in, C_out // 2, 1, stride=2, padding=0, bias=False)
+        self.conv1 = nn.Conv2d(C_in, C_out // 2, 1,
+                               stride=2, padding=0, bias=False)
+        self.conv2 = nn.Conv2d(C_in, C_out // 2, 1,
+                               stride=2, padding=0, bias=False)
         self.bn = nn.BatchNorm2d(C_out, affine=affine)
 
     def forward(self, x):
         x = self.relu(x)
         if x.shape[2] % 2 == 0:
-            out = torch.cat([self.conv1(x), self.conv2(x[:, :, 1:, 1:])], dim=1)
+            out = torch.cat(
+                [self.conv1(x), self.conv2(x[:, :, 1:, 1:])], dim=1)
         else:
             out = torch.cat([self.conv1(x), self.conv2(x[:, :, :, :])], dim=1)
 
         out = self.bn(out)
         return out
 
+# Original MetaNAS MixedOps,
+# class MixedOp(nn.Module):
+#     """ Mixed operation """
+
+#     def __init__(self, C, stride, PRIMITIVES):
+#         super().__init__()
+#         self._ops = nn.ModuleList()
+
+#         for primitive in PRIMITIVES:
+#             op = OPS[primitive](C, stride, affine=False)
+
+#             if not isinstance(op, Identity):
+#                 op = nn.Sequential(op, DropPath_())
+
+#             self._ops.append(op)
+
+#     def forward(self, x, weights, alpha_prune_threshold=0.0):
+#         """
+#         Args:
+#             x: input
+#             weights: weight for each operation
+#             alpha_prune_threshold: prune ops during forward pass if alpha below threshold
+#         """
+#         return sum(
+#             w * op(x) for w, op in zip(weights, self._ops) if w > alpha_prune_threshold
+#         )
+
 
 class MixedOp(nn.Module):
-    """ Mixed operation """
+    """ Progressive DARTS Mixed operation """
 
-    def __init__(self, C, stride, PRIMITIVES):
+    def __init__(self, C, stride, PRIMITIVES, switch):
         super().__init__()
         self._ops = nn.ModuleList()
 
-        for primitive in PRIMITIVES:
-            op = OPS[primitive](C, stride, affine=False)
+        for i in range(len(switch)):
+            if switch[i]:
+                primitive = PRIMITIVES[i]
+                op = OPS[primitive](C, stride, affine=False)
 
-            if not isinstance(op, Identity):
-                op = nn.Sequential(op, DropPath_())
+                if not isinstance(op, Identity):
+                    op = nn.Sequential(op, DropPath_())
 
-            self._ops.append(op)
+                self._ops.append(op)
 
     def forward(self, x, weights, alpha_prune_threshold=0.0):
         """

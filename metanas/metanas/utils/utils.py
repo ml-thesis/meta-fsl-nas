@@ -67,6 +67,21 @@ def set_hyperparameter(config):
         config.w_meta_anneal = 0
         config.w_task_anneal = 0
 
+    elif config.hp_setting == "og_test":  # setting for debugging MetaNAS
+        config.task_train_steps = 2
+        config.n_train = 1
+        config.batch_size = 1
+        config.batch_size_test = 2
+        config.meta_batch_size = 2
+        config.w_lr = 0.005
+        config.alpha_lr = 0.005
+        config.w_meta_lr = 1.0
+        config.a_meta_lr = 0.6
+        config.a_meta_anneal = 0
+        config.a_task_anneal = 0
+        config.w_meta_anneal = 0
+        config.w_task_anneal = 0
+
     elif config.hp_setting == "og":  # default setting from REPTILE paper
         print("Using 'og' hp setting")
         config.task_train_steps = 10

@@ -30,6 +30,7 @@ import time
 import numpy as np
 import pickle
 import torch
+import torch.nn.functional as F
 from metanas.meta_optimizer.reptile import NAS_Reptile
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
@@ -43,26 +44,33 @@ def meta_architecture_search(
     config.logger.info("Start meta architecture search")
 
     # TODO: Move these configurations to argparse
+    ####
+    # P-DARTS
     # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
     # DARTS in the initial stage.
     config.architecture_stages = 3
 
-    # TODO: Configure and implement in DARTS.
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    # operations_preserved = [8, 5, 3]
-    config.operations_preserved = [8, 5, 3]
+    config.drop_number_operations = [2, 1, 1]
+
     # Discovered cells are allowed to keep M=2, skip connections.
-    # Use these for my experiment
-    # M = 2
+    # Use these for my experiment, M = 2
     config.number_of_skip_connections = 2
+
     # Each stage, the super-network is trained for 25 epochs (batch size 96).
     # Warm-start/only tuning network parameters in first 10 epochs.
     # Finally, the number of normal cells in the network increases in these
     # three stages, to 5, 11, 17, respectively.
-    # normal_cells = [5, 11, 17]
-    # config.number_of_normal_cells = [5, 11, 17]
     config.add_layers = 6
+
+    # Set these to be able to re-init them,
+    config.task_optimizer_cls = task_optimizer_cls
+    config.meta_optimizer_cls = meta_optimizer_cls
+
+    # Initialize the variables for Search Space Approximation,
+    config.switches, config.switches_normal, config.switches_reduce = init_switches()
+    ####
 
     # set default gpu device id
     torch.cuda.set_device(config.gpus[0])
@@ -111,7 +119,9 @@ def meta_architecture_search(
         config.normalizer_t_min,
         config.normalizer_temp_anneal_mode,
     )
-    meta_model = _build_model(config, task_distribution, normalizer)
+    meta_model = _build_model(config, task_distribution, normalizer,
+                              config.switches_normal,
+                              config.switches_reduce)
 
     # task & meta optimizer
     config, meta_optimizer = _init_meta_optimizer(
@@ -133,7 +143,7 @@ def meta_architecture_search(
     utils.print_config_params(config, config.logger.info)
 
     # meta training
-    ################################################################################################
+    ###########################################################################
 
     train_info = dict()  # this is added to the experiment.pickle
 
@@ -149,7 +159,7 @@ def meta_architecture_search(
         )
 
     # meta testing
-    ################################################################################################
+    ###########################################################################
     config.logger.info(
         f"train steps for evaluation:{ config.test_task_train_steps} ")
 
@@ -191,24 +201,48 @@ def _init_alpha_normalizer(name, task_train_steps, t_max, t_min, temp_anneal_mod
     return normalizer
 
 
-def _build_model(config, task_distribution, normalizer):
+def _build_model(config, task_distribution, normalizer,
+                 switches_normal=None, switches_reduce=None):
 
     if config.meta_model == "searchcnn":
-        meta_model = SearchCNNController(
-            task_distribution.n_input_channels,
-            config.init_channels,
-            task_distribution.n_classes,
-            config.layers,
-            n_nodes=config.nodes,
-            reduction_layers=config.reduction_layers,
-            device_ids=config.gpus,
-            normalizer=normalizer,
-            PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
-            feature_scale_rate=1,
-            use_hierarchical_alphas=config.use_hierarchical_alphas,
-            use_pairwise_input_alphas=config.use_pairwise_input_alphas,
-            alpha_prune_threshold=config.alpha_prune_threshold,
-        )
+        if switches_normal is not None and switches_reduce is not None:
+            meta_model = SearchCNNController(
+                task_distribution.n_input_channels,
+                config.init_channels,
+                task_distribution.n_classes,
+                config.layers,
+                n_nodes=config.nodes,
+                reduction_layers=config.reduction_layers,
+                device_ids=config.gpus,
+                normalizer=normalizer,
+                PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
+                switches_reduce=switches_reduce,
+                switches_normal=switches_normal,
+                feature_scale_rate=1,
+                use_hierarchical_alphas=config.use_hierarchical_alphas,
+                use_pairwise_input_alphas=config.use_pairwise_input_alphas,
+                alpha_prune_threshold=config.alpha_prune_threshold,
+            )
+        else:
+            assert (switches_normal is None or switches_reduce is None
+                    ), "Only works for Progressive DARTS search currently"
+
+        # Old configuration
+        # meta_model = SearchCNNController(
+        #     task_distribution.n_input_channels,
+        #     config.init_channels,
+        #     task_distribution.n_classes,
+        #     config.layers,
+        #     n_nodes=config.nodes,
+        #     reduction_layers=config.reduction_layers,
+        #     device_ids=config.gpus,
+        #     normalizer=normalizer,
+        #     PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
+        #     feature_scale_rate=1,
+        #     use_hierarchical_alphas=config.use_hierarchical_alphas,
+        #     use_pairwise_input_alphas=config.use_pairwise_input_alphas,
+        #     alpha_prune_threshold=config.alpha_prune_threshold,
+        # )
 
     elif config.meta_model == "maml":
 
@@ -356,9 +390,11 @@ def _get_meta_lr_scheduler(config, meta_optimizer):
 
 
 def _prune_alphas(meta_model, meta_model_prune_threshold):
-    """Remove operations with alphas of that are below threshold from meta model (indirectly)
+    """Remove operations with alphas of that are below threshold from meta
+    model (indirectly)
 
-    Currently this only has an effect for the :class:`SearchCNNController` meta_model
+    Currently this only has an effect for the :class:`SearchCNNController`
+    meta_model
 
     Args:
         meta_model: The meta_model
@@ -386,11 +422,12 @@ def train(
         task_optimizer: A pytorch optimizer for task training
         meta_optimizer: A pytorch optimizer for meta training
         normalizer: To be able to reinit the task optimizer for staging
-        train_info: Dictionary that is added to the experiment.pickle file in addition to training
-            internal data.
+        train_info: Dictionary that is added to the experiment.pickle 
+            file in addition to training internal data.
 
     Returns:
-        A tuple containing the updated config, meta_model and updated train_info.
+        A tuple containing the updated config, meta_model and updated
+        train_info.
     """
     if train_info is None:
         train_info = dict()
@@ -432,28 +469,52 @@ def train(
 
         sample_time.update(time_samp - time_es)
 
-        # P-DARTS, addition of staging
-        current_stage = config.architecture_stages * \
-            meta_epoch // config.meta_epochs
+        ####
+        # P-DARTS
+        # addition of staging (G_k) for Search Space Approximation and
+        # Regularization.
+        current_stage = int(meta_epoch //
+                            (config.meta_epochs / config.architecture_stages))
+
+        config.logger.info(f"current stage: {current_stage}")
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
-        if current_stage > config.architecture_stages * \
-                meta_epoch-1 // config.meta_epochs:
+        if current_stage < int(
+                meta_epoch-1 // (config.meta_epochs /
+                                 config.architecture_stages)) and current_stage is not 0:
 
+            config.logger.info(f"entered new stage: {current_stage}")
+
+            # We increase the depth of the super-network by stacking more cells,
+            # i.e., L_k > L_k−1
             config.layers += config.add_layers
 
-            meta_model = _build_model(config, task_distribution, normalizer)
+            # We reduce the operation space of O_k candidate operations, i.e.
+            # |O^k_(i,j)| = O_k > O_k-1
+            config.switches_normal, config.switches_reduce = reduce_operations(
+                config, meta_model, current_stage+1)
 
-            # task & meta optimizer
+            # TODO: Possibly keep the meta-weights here instead of re-init?
+            meta_model = _build_model(config, task_distribution, normalizer,
+                                      config.switches_normal,
+                                      config.switches_reduce)
+
+            # Re-init the optimizer, task & meta optimizer
+            # TODO: Possibility to reset config here, and start fresh with
+            # optimizers
             config, meta_optimizer = _init_meta_optimizer(
-                config, meta_optimizer, meta_model
+                config, config.meta_optimizer_cls, meta_model
             )
             config, task_optimizer = _init_task_optimizer(
-                config, task_optimizer, meta_model
+                config, config.task_optimizer_cls, meta_model
             )
 
-            # Each task starts with the current meta state
+            config.logger.info(f"switches normal = {config.switches_normal}")
+            config.logger.info(f"switches reduce = {config.switches_reduce}")
+        ####
+
+        # Each task starts with the current meta state
         meta_state = copy.deepcopy(meta_model.state_dict())
         global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
         task_infos = []
@@ -680,6 +741,107 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
 def _str_or_none(x):
     """Convert multiple possible input strings to None"""
     return None if (x is None or not x or x.capitalize() == "None") else x
+
+# Methods taken from P-DARTS,
+
+
+def init_switches():
+    # Initalize switches for Search Space Approximation,
+    # Originating from P-DARTS.
+
+    switches = []
+    # TODO: P-DARTS make these edges configurable
+    # Original P-DARTS, There are 4 intermediate nodes in a cell,
+    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+    # number of edges in a cell.
+    for _ in range(9):
+        switches.append([True for _ in range(len(gt.PRIMITIVES_FEWSHOT))])
+    switches_normal = copy.deepcopy(switches)
+    switches_reduce = copy.deepcopy(switches)
+    return switches, switches_normal, switches_reduce
+
+
+def reduce_operations(config, meta_model, current_stage):
+    # We reduce the operation space of O_k candidate operations, i.e.
+    # |O^k_(i,j)| = O_k > O_k-1, where k is the arch stage
+    switches_normal = copy.deepcopy(config.switches_normal)
+    switches_reduce = copy.deepcopy(config.switches_reduce)
+    last_stage = current_stage == config.architecture_stages
+    # Number of operations to drop, -1 for the index
+    ops_drop = config.drop_number_operations[current_stage-1]
+
+    # drop operations with low architecture weights
+    normal_alphas, reduce_alphas = meta_model.arch_parameters()
+
+    # TODO: Refactor to confirm the implementation of MetaNAS alphas,
+    # might need to get normalized alphas, e.g. normalizer() or
+    # _get_normalized_alphas() instead of hardcoded softmax
+    normal_prob = [F.softmax(alpha, dim=-1
+                             ).data.cpu().numpy() for alpha in normal_alphas]
+    normal_prob = np.concatenate(normal_prob, axis=0)
+    switches_normal = adjust_switches(normal_prob, switches_normal,
+                                      ops_drop, last_stage)
+
+    reduce_prob = [F.softmax(alpha, dim=-1
+                             ).data.cpu().numpy() for alpha in reduce_alphas]
+    reduce_prob = np.concatenate(reduce_prob, axis=0)
+
+    switches_reduce = adjust_switches(reduce_prob, switches_reduce,
+                                      ops_drop, last_stage)
+    return switches_normal, switches_reduce
+
+
+def adjust_switches(prob, switches, ops_drop, last_stage):
+
+    # TODO: P-DARTS make these edges configurable
+    # Original P-DARTS, There are 4 intermediate nodes in a cell,
+    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+    # number of edges in a cell.
+    for i in range(9):
+        idxs = []
+        for j in range(len(gt.PRIMITIVES_FEWSHOT)):
+            if switches[i][j]:
+                idxs.append(j)
+        if last_stage:
+            # for the last stage, drop all Zero operations
+            drop = get_min_k_no_zero(
+                prob[i, :], idxs, ops_drop)
+        else:
+            drop = get_min_k(prob[i, :], ops_drop)
+        for idx in drop:
+            switches[i][idxs[idx]] = False
+    return switches
+
+
+def get_min_k(input_in, k):
+    input = copy.deepcopy(input_in)
+    index = []
+    for i in range(k):
+        idx = np.argmin(input)
+        index.append(idx)
+        input[idx] = 1
+
+    return index
+
+
+def get_min_k_no_zero(w_in, idxs, k):
+    w = copy.deepcopy(w_in)
+    index = []
+    if 0 in idxs:
+        zf = True
+    else:
+        zf = False
+    if zf:
+        w = w[1:]
+        index.append(0)
+        k = k - 1
+    for i in range(k):
+        idx = np.argmin(w)
+        w[idx] = 1
+        if zf:
+            idx = idx + 1
+        index.append(idx)
+    return index
 
 
 if __name__ == "__main__":

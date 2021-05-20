@@ -84,6 +84,8 @@ class SearchCNNController(nn.Module):
         device_ids=None,
         normalizer=dict(),
         PRIMITIVES=None,
+        switches_normal=None,  # P-DARTS variables
+        switches_reduce=None,
         feature_scale_rate=2,
         use_hierarchical_alphas=False,  # deprecated
         use_pairwise_input_alphas=False,
@@ -118,8 +120,20 @@ class SearchCNNController(nn.Module):
         if PRIMITIVES is None:
             PRIMITIVES = gt.PRIMITIVES
 
+        # Previously, adjust for progressive DARTS,
+        # old, n_ops = len(PRIMITIVES)
+
         self.primitives = PRIMITIVES
-        n_ops = len(PRIMITIVES)
+
+        # switch_ons = []
+        # Original code from P-DARTS
+        # for i, switch in enumerate(switches_normal):
+        #     ons = sum(list(map(int, switch)))
+        #     switch_ons.append(ons)
+
+        # checks how many ops to enable
+        n_ops = sum(list(map(int, switches_normal[0])))
+        print("Number of n_ops enabled, ", n_ops)
 
         self.alpha_normal = nn.ParameterList()
         self.alpha_reduce = nn.ParameterList()
@@ -140,8 +154,9 @@ class SearchCNNController(nn.Module):
         self.alpha_in_normal = None
         self.alpha_in_reduce = None
         if use_hierarchical_alphas:  # deprecated
-            # create alpha parameters the different input nodes for a cell, i.e. for each node in a
-            # cell an additional distribution over the input nodes is introduced
+            # create alpha parameters the different input nodes for a
+            # cell, i.e. for each node in a cell an additional
+            # distribution over the input nodes is introduced
             print("Using hierarchical alphas.")
 
             self.alpha_in_normal = nn.ParameterList()
@@ -181,6 +196,8 @@ class SearchCNNController(nn.Module):
             reduction_layers,
             stem_multiplier,
             PRIMITIVES=self.primitives,
+            switches_normal=switches_normal,
+            switches_reduce=switches_reduce,
             feature_scale_rate=feature_scale_rate,
         )
 
@@ -222,12 +239,13 @@ class SearchCNNController(nn.Module):
         )
 
     def prune_alphas(self, prune_threshold=0.0, val=-10e8):
-        """Set the alphas with probability below prune_threshold to a large negative value
+        """Set the alphas with probability below prune_threshold to a \
+        large negative value
 
         Note:
-            The prune_threshold applies to the alpha probabilities (after the softmax is
-            applied) while `val` corresponds to the logit values (thus a large negative value
-            corresponds to a low probability).
+            The prune_threshold applies to the alpha probabilities (after the
+            softmax is applied) while `val` corresponds to the logit values
+            (thus a large negative value corresponds to a low probability).
         """
 
         # reset temperature for prunning
@@ -254,13 +272,14 @@ class SearchCNNController(nn.Module):
 
     def get_sparse_alphas_pw(self, alpha_prune_threshold=0.0):
         """
-        Convert alphas to zero-one-vectors under consideration of pairwise alphas
-
+        Convert alphas to zero-one-vectors under consideration of pairwise
+        alphas
 
         :param alpha_prune_threshold: threshold for pruning
 
-        :return: binary tensors with shape like alpha_normal and alpha_reduce, indicating whether an op is included in the
-        sparsified one shot model
+        :return: binary tensors with shape like alpha_normal and alpha_reduce,
+            indicating whether an op is included in the sparsified one shot
+            model
         """
 
         assert (
@@ -361,8 +380,8 @@ class SearchCNNController(nn.Module):
         weights_normal, weights_reduce = self.get_sparse_alphas_pw(
             alpha_prune_threshold
         )
-        # this returns tensors with only 0's and 1's depending on whether an op is used in the sparsified model
-
+        # this returns tensors with only 0's and 1's depending on whether an
+        # op is used in the sparsified model
         # get none active ops/layer names
 
         # for normal cell
@@ -547,6 +566,8 @@ class SearchCNNController(nn.Module):
             handler.setFormatter(formatter)
 
     def genotype(self):
+        # Function is never called, TODO: Refactor self.primitives in
+        # progressive setting.
         if self.use_pairwise_input_alphas:
 
             weights_pw_normal = [
@@ -598,6 +619,16 @@ class SearchCNNController(nn.Module):
         for n, p in self._alphas:
             yield n, p
 
+    def arch_parameters(self):
+        """P-DARTS method to obtain architecture parameters
+            TODO: Might need to first soft prune the weights
+        """
+        self._arch_parameters = [
+            self.alpha_normal,
+            self.alpha_reduce,
+        ]
+        return self._arch_parameters
+
 
 def broadcast_list(l, device_ids):
     """ Broadcasting list """
@@ -622,6 +653,8 @@ class SearchCNN(nn.Module):
         stem_multiplier=3,
         PRIMITIVES=None,
         feature_scale_rate=2,
+        switches_normal=None,  # P-DARTS variables
+        switches_reduce=None
     ):
         """
         Args:
@@ -662,12 +695,13 @@ class SearchCNN(nn.Module):
             if i in reduction_layers:
                 C_cur *= feature_scale_rate
                 reduction = True
+                cell = SearchCell(n_nodes, C_pp, C_p, C_cur, reduction_p,
+                                  reduction, PRIMITIVES, switches_reduce)
             else:
                 reduction = False
+                cell = SearchCell(n_nodes, C_pp, C_p, C_cur, reduction_p,
+                                  reduction, PRIMITIVES, switches_normal)
 
-            cell = SearchCell(
-                n_nodes, C_pp, C_p, C_cur, reduction_p, reduction, PRIMITIVES
-            )
             reduction_p = reduction
             self.cells.append(cell)
             C_cur_out = C_cur * n_nodes
@@ -836,7 +870,7 @@ class SearchCell(nn.Module):
         preproc1: Preprocessing operation for the s1 input
     """
 
-    def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction, PRIMITIVES):
+    def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction, PRIMITIVES, switches):
         """
         Args:
             n_nodes: Number of intermediate n_nodes. The output of the cell is calculated by
@@ -861,13 +895,18 @@ class SearchCell(nn.Module):
 
         # generate dag
         self.dag = nn.ModuleList()
+        # TODO: Refactor
+        switch_count = 0
         for i in range(self.n_nodes):
             self.dag.append(nn.ModuleList())
             for j in range(2 + i):  # include 2 input nodes
                 # reduction should be used only for input node
                 stride = 2 if reduction and j < 2 else 1
-                op = ops.MixedOp(C, stride, PRIMITIVES)
+
+                # Double check pass switches from P-DARTS,
+                op = ops.MixedOp(C, stride, PRIMITIVES, switches[switch_count])
                 self.dag[i].append(op)
+                switch_count += 1
 
     def forward(
         self, s0, s1, w_dag, w_input=None, w_pw=None, alpha_prune_threshold=0.0
