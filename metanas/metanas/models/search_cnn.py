@@ -122,7 +122,6 @@ class SearchCNNController(nn.Module):
 
         # Previously, adjust for progressive DARTS,
         # old, n_ops = len(PRIMITIVES)
-
         self.primitives = PRIMITIVES
 
         # switch_ons = []
@@ -565,33 +564,70 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self):
-        # Function is never called, TODO: Refactor self.primitives in
-        # progressive setting.
-        if self.use_pairwise_input_alphas:
+    def genotype(self, switches_normal=None, switches_reduce=None, limit_skip_connections=None):
+        # TODO: Skipped for now TODO: see below,
+        # if self.use_pairwise_input_alphas:
+        #     # TODO: Implement for pairwise alphas as well?
 
-            weights_pw_normal = [
-                F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
-            ]
-            weights_pw_reduce = [
-                F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
-            ]
+        #     weights_pw_normal = [
+        #         F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
+        #     ]
+        #     weights_pw_reduce = [
+        #         F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
+        #     ]
 
-            gene_normal = gt.parse_pairwise(
-                self.alpha_normal, weights_pw_normal, primitives=self.primitives
-            )
-            gene_reduce = gt.parse_pairwise(
-                self.alpha_reduce, weights_pw_reduce, primitives=self.primitives
-            )
+        #     gene_normal = gt.parse_pairwise(
+        #         self.alpha_normal, weights_pw_normal, primitives=self.primitives
+        #     )
+        #     gene_reduce = gt.parse_pairwise(
+        #         self.alpha_reduce, weights_pw_reduce, primitives=self.primitives
+        #     )
 
-        elif self.use_hierarchical_alphas:
+        # elif
+        if self.use_hierarchical_alphas:
             raise NotImplementedError
         else:
+            def _parse_switches(switches):
+                n = 2
+                start = 0
+                gene = []
+                step = self.n_nodes
+                for i in range(step):
+                    end = start + n
+                    for j in range(start, end):
+                        for k in range(len(switches[j])):
+                            if switches[j][k]:
+                                gene.append((self.primitives[k], j - start))
+                    start = end
+                    n = n + 1
+                return gene
 
-            gene_normal = gt.parse(
-                self.alpha_normal, k=2, primitives=self.primitives)
-            gene_reduce = gt.parse(
-                self.alpha_reduce, k=2, primitives=self.primitives)
+            gene_normal = _parse_switches(switches_normal)
+            gene_reduce = _parse_switches(switches_reduce)
+
+            # TODO: Match old approach,
+            # gene_normal = gt.parse(
+            #     self.alpha_normal, k=2, primitives=self.primitives)
+            # gene_reduce = gt.parse(
+            #     self.alpha_reduce, k=2, primitives=self.primitives)
+
+            config.logger.info('Restricting skipconnect...')
+            # generating genotypes with different numbers of skip-connect operations
+            for sks in range(0, 9):
+                max_sk = 8 - sks
+                num_sk = check_sk_number(switches_normal)
+                if not num_sk > max_sk:
+                    continue
+                while num_sk > max_sk:
+                    normal_prob = delete_min_sk_prob(
+                        switches_normal, switches_normal_2, normal_prob)
+                    switches_normal = keep_1_on(switches_normal_2, normal_prob)
+                    switches_normal = keep_2_branches(
+                        switches_normal, normal_prob)
+                    num_sk = check_sk_number(switches_normal)
+                config.logger.info('Number of skip-connect: %d', max_sk)
+                genotype = parse_network(switches_normal, switches_reduce)
+                config.logger.info(genotype)
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 

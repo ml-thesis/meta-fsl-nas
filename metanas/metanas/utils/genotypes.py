@@ -19,14 +19,11 @@ which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
 """
 
-from collections import namedtuple
 
+from collections import namedtuple
 import torch
 import torch.nn as nn
-
 from metanas.models import ops, search_cnn
-
-
 Genotype = namedtuple("Genotype", "normal normal_concat reduce reduce_concat")
 
 
@@ -137,6 +134,7 @@ def to_dag(C_in, gene, reduction):
             # reduction cell & from input nodes => stride = 2
             stride = 2 if reduction and s_idx < 2 else 1
             op = ops.OPS[op_name](C_in, stride, True)
+            # TODO: Drop path on all ops?
             if not isinstance(op, ops.Identity):  # Identity does not use drop path
                 op = nn.Sequential(op, ops.DropPath_())
             op.s_idx = s_idx
@@ -167,7 +165,6 @@ def from_str(s):
 
 
 def parse(alpha, k, primitives=PRIMITIVES_FEWSHOT):
-
     """
     parse continuous alpha to discrete gene.
     alpha is ParameterList:
@@ -247,7 +244,8 @@ def parse_pairwise(alpha, alpha_pairwise, primitives=PRIMITIVES_FEWSHOT):  # dep
         # pw_edges: Tensor(n_input_nodes)
 
         # find strongest edge for each input
-        edge_max, primitive_indices = torch.topk(edges[:, :], 1)  # ignore 'none'
+        edge_max, primitive_indices = torch.topk(
+            edges[:, :], 1)  # ignore 'none'
         node_gene = []
 
         top_inputs = []

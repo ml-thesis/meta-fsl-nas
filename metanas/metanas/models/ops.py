@@ -252,33 +252,6 @@ class FactorizedReduce(nn.Module):
         out = self.bn(out)
         return out
 
-# Original MetaNAS MixedOps,
-# class MixedOp(nn.Module):
-#     """ Mixed operation """
-
-#     def __init__(self, C, stride, PRIMITIVES):
-#         super().__init__()
-#         self._ops = nn.ModuleList()
-
-#         for primitive in PRIMITIVES:
-#             op = OPS[primitive](C, stride, affine=False)
-
-#             if not isinstance(op, Identity):
-#                 op = nn.Sequential(op, DropPath_())
-
-#             self._ops.append(op)
-
-#     def forward(self, x, weights, alpha_prune_threshold=0.0):
-#         """
-#         Args:
-#             x: input
-#             weights: weight for each operation
-#             alpha_prune_threshold: prune ops during forward pass if alpha below threshold
-#         """
-#         return sum(
-#             w * op(x) for w, op in zip(weights, self._ops) if w > alpha_prune_threshold
-#         )
-
 
 class MixedOp(nn.Module):
     """ Progressive DARTS Mixed operation """
@@ -292,8 +265,9 @@ class MixedOp(nn.Module):
                 primitive = PRIMITIVES[i]
                 op = OPS[primitive](C, stride, affine=False)
 
-                if not isinstance(op, Identity):
-                    op = nn.Sequential(op, DropPath_())
+                # Now, always apply DropPath
+                # if not isinstance(op, Identity):
+                op = nn.Sequential(op, DropPath_())
 
                 self._ops.append(op)
 

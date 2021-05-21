@@ -29,7 +29,6 @@ from metanas.utils import utils
 from metanas.models.search_cnn import SearchCNNController
 class Darts:
     def __init__(self, model, config, do_schedule_lr=False):
-
         self.config = config
         self.model = model
         self.do_schedule_lr = do_schedule_lr
@@ -58,6 +57,9 @@ class Darts:
             self.config.w_weight_decay,
             self.config.use_first_order_darts,
         )
+
+    def update_dropout_operations(dropout):
+        self.model.drop_path_prob(dropout)
 
     def step(
         self,

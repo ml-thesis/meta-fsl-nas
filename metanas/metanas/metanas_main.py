@@ -54,10 +54,6 @@ def meta_architecture_search(
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
     config.drop_number_operations = [2, 1, 1]
 
-    # Discovered cells are allowed to keep M=2, skip connections.
-    # Use these for my experiment, M = 2
-    config.number_of_skip_connections = 2
-
     # Each stage, the super-network is trained for 25 epochs (batch size 96).
     # Warm-start/only tuning network parameters in first 10 epochs.
     # Finally, the number of normal cells in the network increases in these
@@ -67,6 +63,20 @@ def meta_architecture_search(
     # Set these to be able to re-init them,
     config.task_optimizer_cls = task_optimizer_cls
     config.meta_optimizer_cls = meta_optimizer_cls
+
+    # Dropout rate on the operations
+    config.dropout_operations = [0, 0.3, 0.6]
+
+    # TODO: Increase the initial channels,
+    # Meanwhile, we increase the number of initial channels from
+    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
+
+    # TODO: Make warm-up iterations configurable to each stage instead
+    # of only initial stage.
+
+    # Discovered cells are allowed to keep M=2, skip connections.
+    # Use these for my experiment, M = 2
+    config.number_of_skip_connections = 2
 
     # Initialize the variables for Search Space Approximation,
     config.switches, config.switches_normal, config.switches_reduce = init_switches()
@@ -202,7 +212,8 @@ def _init_alpha_normalizer(name, task_train_steps, t_max, t_min, temp_anneal_mod
 
 
 def _build_model(config, task_distribution, normalizer,
-                 switches_normal=None, switches_reduce=None):
+                 switches_normal=None, switches_reduce=None,
+                 dropout_operations=0.0):
 
     if config.meta_model == "searchcnn":
         if switches_normal is not None and switches_reduce is not None:
@@ -218,6 +229,7 @@ def _build_model(config, task_distribution, normalizer,
                 PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
                 switches_reduce=switches_reduce,
                 switches_normal=switches_normal,
+                dropout_operations=dropout_operations,
                 feature_scale_rate=1,
                 use_hierarchical_alphas=config.use_hierarchical_alphas,
                 use_pairwise_input_alphas=config.use_pairwise_input_alphas,
@@ -478,6 +490,21 @@ def train(
 
         config.logger.info(f"current stage: {current_stage}")
 
+        # TODO: Add warm-up iterations for each stage
+        # with appropriate dropout rate.
+        # model.module.p = float(
+        #     drop_rate[sp]) * (epochs - epoch - 1) / epochs
+        # model.module.update_p()
+
+        scale_factor = 0.2
+        dropout_current_stage = config.dropout_operations[current_stage]
+        # TODO: Adjust to ignore no_arch epochs
+        # should be, np.exp(-(meta_epoch - eps_no_arch) * scale_factor)
+        # (meta_epoch >= config.warm_up_epochs):
+        dropout_rate = float(dropout_current_stage *
+                             np.exp(-(meta_epoch * scale_factor)))
+        task_optimizer.update_dropout_operations(dropout_rate)
+
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
         if current_stage < int(
@@ -510,6 +537,12 @@ def train(
                 config, config.task_optimizer_cls, meta_model
             )
 
+            # Set the dropout rate for operations,
+            task_optimizer.update_dropout_operations(
+                config.dropout_operations[current_stage])
+
+            config.logger.info(
+                f"dropout operations = {config.dropout_operations[current_stage]}")
             config.logger.info(f"switches normal = {config.switches_normal}")
             config.logger.info(f"switches reduce = {config.switches_reduce}")
         ####
@@ -641,8 +674,51 @@ def train(
     utils.save_state(
         meta_model, meta_optimizer, task_optimizer, config.path, job_id=config.job_id
     )
+
+    # P-DARTS
+    # TODO: Refactor this piece of code to the designated method and
+    # should this be done at all final stages of the meta learning or only the final
+    # meta-model?
+    # drop operations with low architecture weights
+    normal_alphas, reduce_alphas = meta_model.arch_parameters()
+
+    # TODO: Refactor to confirm the implementation of MetaNAS alphas,
+    # might need to get normalized alphas, e.g. normalizer() or
+    # _get_normalized_alphas() instead of hardcoded softmax
+    normal_prob = [F.softmax(alpha, dim=-1
+                             ).data.cpu().numpy() for alpha in normal_alphas]
+    normal_prob = np.concatenate(normal_prob, axis=0)
+
+    reduce_prob = [F.softmax(alpha, dim=-1
+                             ).data.cpu().numpy() for alpha in reduce_alphas]
+    reduce_prob = np.concatenate(reduce_prob, axis=0)
+
+    # TODO: If None in primitives set this probability to zero first.
+
+    # Hardcoded amount of operations to keep,
+    # TODO: Adjust to correct amount
+    k = 2
+    normal_top_k = [(-row).argsort()[:k] for row in normal_prob]
+    reduce_top_k = [(-row).argsort()[:k] for row in reduce_prob]
+
+    # create placeholder for final switches
+    final_s_normal = np.full(
+        np.array(config.switches_reduce).shape, False).tolist()
+    final_s_reduce = np.full(
+        np.array(config.switches_normal).shape, False).tolist()
+
+    for i, (s_normal, s_reduce) in enumerate(zip(final_s_normal,
+                                                 final_s_reduce)):
+        for j in range(k):
+            s_normal[normal_top_k[i][j]] = True
+            s_reduce[reduce_top_k[i][j]] = True
+
+    # Parse the network in the genotype call, TODO: Fix the usage of
+    # pairwise alphas
     experiment = {
-        "meta_genotype": meta_model.genotype(),
+        "meta_genotype": meta_model.genotype(final_s_normal,
+                                             final_s_reduce,
+                                             limit_skip_connections=config.number_of_skip_connections),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
     experiment.update(train_info)
@@ -759,6 +835,74 @@ def init_switches():
     switches_normal = copy.deepcopy(switches)
     switches_reduce = copy.deepcopy(switches)
     return switches, switches_normal, switches_reduce
+
+
+def check_sk_number(switches):
+    count = 0
+    for i in range(len(switches)):
+        if switches[i][2]:  # TODO: Hardcoded?
+            count = count + 1
+
+    return count
+
+
+def delete_min_sk_prob(switches_in, switches_bk, probs_in):
+    def _get_sk_idx(switches_in, switches_bk, k):
+        if not switches_in[k][2]:
+            idx = -1
+        else:
+            idx = 0
+            for i in range(3):
+                if switches_bk[k][i]:
+                    idx = idx + 1
+        return idx
+    probs_out = copy.deepcopy(probs_in)
+    sk_prob = [1.0 for i in range(len(switches_bk))]
+    for i in range(len(switches_in)):
+        idx = _get_sk_idx(switches_in, switches_bk, i)
+        if not idx == -1:
+            sk_prob[i] = probs_out[i][idx]
+    d_idx = np.argmin(sk_prob)
+    idx = _get_sk_idx(switches_in, switches_bk, d_idx)
+    probs_out[d_idx][idx] = 0.0
+
+    return probs_out
+
+
+def keep_1_on(switches_in, probs):
+    switches = copy.deepcopy(switches_in)
+    for i in range(len(switches)):
+        idxs = []
+        for j in range(len(gt.PRIMITIVES_FEWSHOT)):
+            if switches[i][j]:
+                idxs.append(j)
+        drop = get_min_k_no_zero(probs[i, :], idxs, 2)
+        for idx in drop:
+            switches[i][idxs[idx]] = False
+    return switches
+
+
+def keep_2_branches(switches_in, probs):
+    switches = copy.deepcopy(switches_in)
+    final_prob = [0.0 for i in range(len(switches))]
+    for i in range(len(switches)):
+        final_prob[i] = max(probs[i])
+    keep = [0, 1]
+    n = 3
+    start = 2
+    for i in range(3):
+        end = start + n
+        tb = final_prob[start:end]
+        edge = sorted(range(n), key=lambda x: tb[x])
+        keep.append(edge[-1] + start)
+        keep.append(edge[-2] + start)
+        start = end
+        n = n + 1
+    for i in range(len(switches)):
+        if not i in keep:
+            for j in range(len(gt.PRIMITIVES_FEWSHOT)):
+                switches[i][j] = False
+    return switches
 
 
 def reduce_operations(config, meta_model, current_stage):
