@@ -38,7 +38,7 @@ args=(
     --test_task_train_steps 2 \
 
     --warm_up_epochs 1 \
-    --use_pairwise_input_alphas \
+    # --use_pairwise_input_alphas \
     # --eval_freq 2500 \
     --eval_freq 5 \
     # --eval_epochs 200 \

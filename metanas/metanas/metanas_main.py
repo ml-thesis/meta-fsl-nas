@@ -82,6 +82,9 @@ def meta_architecture_search(
     config.switches, config.switches_normal, config.switches_reduce = init_switches()
     ####
 
+    # Find mistakes in gradient computation
+    torch.autograd.set_detect_anomaly(True)
+
     # set default gpu device id
     torch.cuda.set_device(config.gpus[0])
 
@@ -212,8 +215,7 @@ def _init_alpha_normalizer(name, task_train_steps, t_max, t_min, temp_anneal_mod
 
 
 def _build_model(config, task_distribution, normalizer,
-                 switches_normal=None, switches_reduce=None,
-                 dropout_operations=0.0):
+                 switches_normal=None, switches_reduce=None):
 
     if config.meta_model == "searchcnn":
         if switches_normal is not None and switches_reduce is not None:
@@ -229,7 +231,6 @@ def _build_model(config, task_distribution, normalizer,
                 PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
                 switches_reduce=switches_reduce,
                 switches_normal=switches_normal,
-                dropout_operations=dropout_operations,
                 feature_scale_rate=1,
                 use_hierarchical_alphas=config.use_hierarchical_alphas,
                 use_pairwise_input_alphas=config.use_pairwise_input_alphas,
@@ -501,9 +502,9 @@ def train(
         # TODO: Adjust to ignore no_arch epochs
         # should be, np.exp(-(meta_epoch - eps_no_arch) * scale_factor)
         # (meta_epoch >= config.warm_up_epochs):
-        dropout_rate = float(dropout_current_stage *
-                             np.exp(-(meta_epoch * scale_factor)))
-        task_optimizer.update_dropout_operations(dropout_rate)
+        # dropout_rate = float(dropout_current_stage *
+        #                      np.exp(-(meta_epoch * scale_factor)))
+        # task_optimizer.update_dropout_operations(dropout_rate)
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
@@ -538,8 +539,8 @@ def train(
             )
 
             # Set the dropout rate for operations,
-            task_optimizer.update_dropout_operations(
-                config.dropout_operations[current_stage])
+            # task_optimizer.update_dropout_operations(
+            #     config.dropout_operations[current_stage])
 
             config.logger.info(
                 f"dropout operations = {config.dropout_operations[current_stage]}")

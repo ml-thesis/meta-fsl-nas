@@ -12,7 +12,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU Affero General Public License for more details.
 """
 
-""" 
+"""
 Based on https://github.com/khanrc/pt.darts
 which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
@@ -58,7 +58,7 @@ class Darts:
             self.config.use_first_order_darts,
         )
 
-    def update_dropout_operations(dropout):
+    def update_dropout_operations(self, dropout):
         self.model.drop_path_prob(dropout)
 
     def step(

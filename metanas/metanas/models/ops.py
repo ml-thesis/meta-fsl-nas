@@ -71,7 +71,7 @@ def drop_path_(x, drop_prob, training):
     return x
 
 
-class DropPath(nn.Module):
+class DropPath_(nn.Module):
     def __init__(self, p=0.0):
         """[!] DropPath is inplace module
         Args:
