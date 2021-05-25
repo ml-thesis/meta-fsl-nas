@@ -1,27 +1,3 @@
-""" Script for metanas & baseline trainings
-Copyright (c) 2021 Robert Bosch GmbH
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-"""
-
-""" 
-Based on https://github.com/khanrc/pt.darts
-which is licensed under MIT License,
-cf. 3rd-party-licenses.txt in root directory.
-"""
-
-
-
-
 import argparse
 from collections import OrderedDict
 import copy
@@ -38,21 +14,45 @@ from metanas.models.maml_model import MamlModel
 from metanas.task_optimizer.darts import Darts
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
+
+
+""" Script for metanas & baseline trainings
+Copyright (c) 2021 Robert Bosch GmbH
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+"""
+
+"""
+Based on https://github.com/khanrc/pt.darts
+which is licensed under MIT License,
+cf. 3rd-party-licenses.txt in root directory.
+"""
+
+
 def meta_architecture_search(
     config, task_optimizer_cls=Darts, meta_optimizer_cls=NAS_Reptile
 ):
     config.logger.info("Start meta architecture search")
 
-    # TODO: Move these configurations to argparse
     ####
     # P-DARTS
+    # TODO: Move these configurations to argparse
     # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
     # DARTS in the initial stage.
     config.architecture_stages = 3
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    config.drop_number_operations = [2, 1, 1]
+    config.drop_number_operations = [2, 3, 2]
 
     # Each stage, the super-network is trained for 25 epochs (batch size 96).
     # Warm-start/only tuning network parameters in first 10 epochs.
@@ -67,19 +67,24 @@ def meta_architecture_search(
     # Dropout rate on the operations
     config.dropout_operations = [0, 0.3, 0.6]
 
-    # TODO: Increase the initial channels,
     # Meanwhile, we increase the number of initial channels from
     # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
+    config.init_channels_stages = [16, 28, 40]
 
-    # TODO: Make warm-up iterations configurable to each stage instead
-    # of only initial stage.
+    # Start off with the first stage,
+    config.initial_channels = config.init_channels_stages[0]
 
     # Discovered cells are allowed to keep M=2, skip connections.
     # Use these for my experiment, M = 2
     config.number_of_skip_connections = 2
 
     # Initialize the variables for Search Space Approximation,
-    config.switches, config.switches_normal, config.switches_reduce = init_switches()
+    # Original P-DARTS, There are 4 intermediate nodes in a cell,
+    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+    # number of edges in a cell.
+    config.edges = sum(i for i in range(2, config.nodes+2))
+    config.switches_normal, config.switches_reduce = init_switches(
+        config.edges)
     ####
 
     # Find mistakes in gradient computation
@@ -93,9 +98,9 @@ def meta_architecture_search(
     torch.manual_seed(config.seed)
     torch.cuda.manual_seed_all(config.seed)
 
-    # This flag allows you to enable the inbuilt cudnn auto-tuner to find the best
-    # algorithm to use for your hardware. Benchmark mode is good whenever your input sizes
-    # for your network do not vary
+    # This flag allows you to enable the inbuilt cudnn auto-tuner to find the
+    # best algorithm to use for your hardware. Benchmark mode is good whenever
+    # your input sizes for your network do not vary
     # https://discuss.pytorch.org/t/what-does-torch-backends-cudnn-benchmark-do/5936
     torch.backends.cudnn.benchmark = True
 
@@ -198,7 +203,8 @@ def meta_architecture_search(
     config.logger.info("Finished meta architecture search")
 
 
-def _init_alpha_normalizer(name, task_train_steps, t_max, t_min, temp_anneal_mode):
+def _init_alpha_normalizer(name, task_train_steps, t_max, t_min,
+                           temp_anneal_mode):
     normalizer = dict()
     normalizer["name"] = name
     normalizer["params"] = dict()
@@ -435,7 +441,7 @@ def train(
         task_optimizer: A pytorch optimizer for task training
         meta_optimizer: A pytorch optimizer for meta training
         normalizer: To be able to reinit the task optimizer for staging
-        train_info: Dictionary that is added to the experiment.pickle 
+        train_info: Dictionary that is added to the experiment.pickle
             file in addition to training internal data.
 
     Returns:
@@ -469,6 +475,9 @@ def train(
     config.losses_logger = utils.AverageMeter()
     config.losses_logger_test = utils.AverageMeter()
 
+    # Staging epochs, track episodes in each stage
+    staging_epoch = 0
+
     # meta lr annealing
     w_meta_lr_scheduler, a_meta_lr_scheduler = _get_meta_lr_scheduler(
         config, meta_optimizer
@@ -489,34 +498,29 @@ def train(
         current_stage = int(meta_epoch //
                             (config.meta_epochs / config.architecture_stages))
 
-        config.logger.info(f"current stage: {current_stage}")
-
-        # TODO: Add warm-up iterations for each stage
-        # with appropriate dropout rate.
-        # model.module.p = float(
-        #     drop_rate[sp]) * (epochs - epoch - 1) / epochs
-        # model.module.update_p()
-
         scale_factor = 0.2
+        # Ignoring the warm-up epochs
         dropout_current_stage = config.dropout_operations[current_stage]
-        # TODO: Adjust to ignore no_arch epochs
-        # should be, np.exp(-(meta_epoch - eps_no_arch) * scale_factor)
-        # (meta_epoch >= config.warm_up_epochs):
-        # dropout_rate = float(dropout_current_stage *
-        #                      np.exp(-(meta_epoch * scale_factor)))
-        # task_optimizer.update_dropout_operations(dropout_rate)
+        dropout_rate = float(dropout_current_stage *
+                             np.exp(-
+                                    (meta_epoch - config.warm_up_epochs *
+                                     scale_factor)))
+        meta_model.drop_path_prob(dropout_rate)
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
-        if current_stage < int(
-                meta_epoch-1 // (config.meta_epochs /
-                                 config.architecture_stages)) and current_stage is not 0:
+        prev_stage = int((meta_epoch-1) // (config.meta_epochs /
+                                            config.architecture_stages))
+        if current_stage > prev_stage and current_stage != 0:
 
             config.logger.info(f"entered new stage: {current_stage}")
 
-            # We increase the depth of the super-network by stacking more cells,
-            # i.e., L_k > L_k−1
+            # We increase the depth of the super-network by stacking more
+            # cells, i.e., L_k > L_k−1
             config.layers += config.add_layers
+
+            # Increase initial channels
+            config.initial_channels = config.init_channels_stages[current_stage]
 
             # We reduce the operation space of O_k candidate operations, i.e.
             # |O^k_(i,j)| = O_k > O_k-1
@@ -539,11 +543,10 @@ def train(
             )
 
             # Set the dropout rate for operations,
-            # task_optimizer.update_dropout_operations(
-            #     config.dropout_operations[current_stage])
+            meta_model.drop_path_prob(dropout_rate)
 
             config.logger.info(
-                f"dropout operations = {config.dropout_operations[current_stage]}")
+                f"dropout ops = {config.dropout_operations[current_stage]}")
             config.logger.info(f"switches normal = {config.switches_normal}")
             config.logger.info(f"switches reduce = {config.switches_reduce}")
         ####
@@ -573,7 +576,9 @@ def train(
         meta_optimizer.step(task_infos)
 
         # update meta LR
-        if (a_meta_lr_scheduler is not None) and (meta_epoch >= config.warm_up_epochs):
+        # Adjusted to staging epochs, instead of meta epochs
+        if (a_meta_lr_scheduler is not None) and \
+                (staging_epoch >= config.warm_up_epochs):
             a_meta_lr_scheduler.step()
 
         if w_meta_lr_scheduler is not None:
@@ -668,18 +673,22 @@ def train(
 
             # prune alpha values in meta model every config.eval_freq epochs
             _prune_alphas(
-                meta_model, meta_model_prune_threshold=config.meta_model_prune_threshold
+                meta_model,
+                meta_model_prune_threshold=config.meta_model_prune_threshold
             )
+
+            staging_epoch += 1
 
     # end of meta train
     utils.save_state(
-        meta_model, meta_optimizer, task_optimizer, config.path, job_id=config.job_id
+        meta_model, meta_optimizer, task_optimizer, config.path,
+        job_id=config.job_id
     )
 
     # P-DARTS
-    # TODO: Refactor this piece of code to the designated method and
-    # should this be done at all final stages of the meta learning or only the final
-    # meta-model?
+    # TODO: Last, Refactor this piece of code to the designated method and
+    # should this be done at all final stages of the meta learning or only the
+    # final meta-model?
     # drop operations with low architecture weights
     normal_alphas, reduce_alphas = meta_model.arch_parameters()
 
@@ -716,10 +725,15 @@ def train(
 
     # Parse the network in the genotype call, TODO: Fix the usage of
     # pairwise alphas
+    # TODO: Prune skip connections of the graph
+    # config,
+    # final_s_normal,
+    # final_s_reduce,
+    # limit_skip_connections=config.number_of_skip_connections,
+    # normal_prob=normal_prob,
+    # reduce_prob=reduce_prob)
     experiment = {
-        "meta_genotype": meta_model.genotype(final_s_normal,
-                                             final_s_reduce,
-                                             limit_skip_connections=config.number_of_skip_connections),
+        "meta_genotype": meta_model.genotype(),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
     experiment.update(train_info)
@@ -739,10 +753,11 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     """Meta-testing
 
     Returns:
-        A tuple consisting of (config, alpha_logger).
-        The config contains the fields `top1_logger_test` with the average top1 accuracy and
-        `losses_logger_test` with the average loss during meta test test.
-        The alpha logger contains lists of architecture alpha parameters.
+        A tuple consisting of (config, alpha_logger). The config
+        contains the fields `top1_logger_test` with the average
+        top1 accuracy and `losses_logger_test` with the average
+        loss during meta test test. The alpha logger contains
+        lists of architecture alpha parameters.
     """
     # Each task starts with the current meta state, make a backup
     meta_state = copy.deepcopy(meta_model.state_dict())
@@ -822,88 +837,16 @@ def _str_or_none(x):
 # Methods taken from P-DARTS,
 
 
-def init_switches():
+def init_switches(edges):
     # Initalize switches for Search Space Approximation,
     # Originating from P-DARTS.
 
     switches = []
-    # TODO: P-DARTS make these edges configurable
-    # Original P-DARTS, There are 4 intermediate nodes in a cell,
-    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-    # number of edges in a cell.
-    for _ in range(9):
+    for _ in range(edges):
         switches.append([True for _ in range(len(gt.PRIMITIVES_FEWSHOT))])
     switches_normal = copy.deepcopy(switches)
     switches_reduce = copy.deepcopy(switches)
-    return switches, switches_normal, switches_reduce
-
-
-def check_sk_number(switches):
-    count = 0
-    for i in range(len(switches)):
-        if switches[i][2]:  # TODO: Hardcoded?
-            count = count + 1
-
-    return count
-
-
-def delete_min_sk_prob(switches_in, switches_bk, probs_in):
-    def _get_sk_idx(switches_in, switches_bk, k):
-        if not switches_in[k][2]:
-            idx = -1
-        else:
-            idx = 0
-            for i in range(3):
-                if switches_bk[k][i]:
-                    idx = idx + 1
-        return idx
-    probs_out = copy.deepcopy(probs_in)
-    sk_prob = [1.0 for i in range(len(switches_bk))]
-    for i in range(len(switches_in)):
-        idx = _get_sk_idx(switches_in, switches_bk, i)
-        if not idx == -1:
-            sk_prob[i] = probs_out[i][idx]
-    d_idx = np.argmin(sk_prob)
-    idx = _get_sk_idx(switches_in, switches_bk, d_idx)
-    probs_out[d_idx][idx] = 0.0
-
-    return probs_out
-
-
-def keep_1_on(switches_in, probs):
-    switches = copy.deepcopy(switches_in)
-    for i in range(len(switches)):
-        idxs = []
-        for j in range(len(gt.PRIMITIVES_FEWSHOT)):
-            if switches[i][j]:
-                idxs.append(j)
-        drop = get_min_k_no_zero(probs[i, :], idxs, 2)
-        for idx in drop:
-            switches[i][idxs[idx]] = False
-    return switches
-
-
-def keep_2_branches(switches_in, probs):
-    switches = copy.deepcopy(switches_in)
-    final_prob = [0.0 for i in range(len(switches))]
-    for i in range(len(switches)):
-        final_prob[i] = max(probs[i])
-    keep = [0, 1]
-    n = 3
-    start = 2
-    for i in range(3):
-        end = start + n
-        tb = final_prob[start:end]
-        edge = sorted(range(n), key=lambda x: tb[x])
-        keep.append(edge[-1] + start)
-        keep.append(edge[-2] + start)
-        start = end
-        n = n + 1
-    for i in range(len(switches)):
-        if not i in keep:
-            for j in range(len(gt.PRIMITIVES_FEWSHOT)):
-                switches[i][j] = False
-    return switches
+    return switches_normal, switches_reduce
 
 
 def reduce_operations(config, meta_model, current_stage):
@@ -925,24 +868,24 @@ def reduce_operations(config, meta_model, current_stage):
                              ).data.cpu().numpy() for alpha in normal_alphas]
     normal_prob = np.concatenate(normal_prob, axis=0)
     switches_normal = adjust_switches(normal_prob, switches_normal,
-                                      ops_drop, last_stage)
+                                      ops_drop, last_stage, config.edges)
 
     reduce_prob = [F.softmax(alpha, dim=-1
                              ).data.cpu().numpy() for alpha in reduce_alphas]
     reduce_prob = np.concatenate(reduce_prob, axis=0)
 
     switches_reduce = adjust_switches(reduce_prob, switches_reduce,
-                                      ops_drop, last_stage)
+                                      ops_drop, last_stage, config.edges)
     return switches_normal, switches_reduce
 
 
-def adjust_switches(prob, switches, ops_drop, last_stage):
+def adjust_switches(prob, switches, ops_drop, last_stage, edges):
 
     # TODO: P-DARTS make these edges configurable
     # Original P-DARTS, There are 4 intermediate nodes in a cell,
     # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
     # number of edges in a cell.
-    for i in range(9):
+    for i in range(edges):
         idxs = []
         for j in range(len(gt.PRIMITIVES_FEWSHOT)):
             if switches[i][j]:

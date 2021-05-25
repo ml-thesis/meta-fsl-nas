@@ -1,3 +1,8 @@
+
+import torch
+import torch.nn as nn
+from metanas.utils import genotypes as gt
+
 """ Operations 
 Copyright (c) 2021 Robert Bosch GmbH
 
@@ -20,9 +25,6 @@ cf. 3rd-party-licenses.txt in root directory.
 """
 
 
-import torch
-import torch.nn as nn
-from metanas.utils import genotypes as gt
 OPS = {
     "none": lambda C, stride, affine: Zero(stride),
     "avg_pool_3x3": lambda C, stride, affine: PoolBN(
@@ -265,9 +267,12 @@ class MixedOp(nn.Module):
                 primitive = PRIMITIVES[i]
                 op = OPS[primitive](C, stride, affine=False)
 
-                # Now, always apply DropPath
-                # if not isinstance(op, Identity):
-                op = nn.Sequential(op, DropPath_())
+                # Apply level dropout after each skip-connection. To partially
+                # "cut off" the straight path through skip-connections.
+                if isinstance(op, Identity):
+                    op = nn.Sequential(op, nn.Dropout())
+                else:
+                    op = nn.Sequential(op, DropPath_())
 
                 self._ops.append(op)
 

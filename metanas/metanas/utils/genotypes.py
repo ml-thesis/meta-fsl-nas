@@ -118,10 +118,10 @@ PRIMITIVES_FEWSHOT = [
     "conv_1x5_5x1",
     "conv_3x3",
     "sep_conv_3x3",
-    # "sep_conv_5x5",
+    # "sep_conv_5x5",  # remove
     "dil_conv_3x3",
-    # "dil_conv_5x5",
-    # "none",
+    # "dil_conv_5x5",  # remove
+    # "none",  # remove
 ]
 
 
@@ -134,7 +134,6 @@ def to_dag(C_in, gene, reduction):
             # reduction cell & from input nodes => stride = 2
             stride = 2 if reduction and s_idx < 2 else 1
             op = ops.OPS[op_name](C_in, stride, True)
-            # TODO: Drop path on all ops?
             if not isinstance(op, ops.Identity):  # Identity does not use drop path
                 op = nn.Sequential(op, ops.DropPath_())
             op.s_idx = s_idx

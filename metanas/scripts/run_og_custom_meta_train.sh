@@ -38,7 +38,7 @@ args=(
     --test_task_train_steps 2 \
 
     --warm_up_epochs 1 \
-    # --use_pairwise_input_alphas \
+    --use_pairwise_input_alphas \
     # --eval_freq 2500 \
     --eval_freq 5 \
     # --eval_epochs 200 \
@@ -53,6 +53,7 @@ args=(
     # Architectures
     --init_channels 28 \
     --layers 5 \
+    --nodes 4 \
     --reduction_layers 2 4 \
     --use_first_order_darts \
 

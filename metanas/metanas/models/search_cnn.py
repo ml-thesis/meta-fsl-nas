@@ -1,4 +1,17 @@
-""" CNN for architecture search 
+
+import functools
+import logging
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.parallel._functions import Broadcast
+import scipy.special
+import copy
+from metanas.models import ops
+from metanas.utils import genotypes as gt
+
+""" CNN for architecture search
 Copyright (c) 2021 Robert Bosch GmbH
 
 This program is free software: you can redistribute it and/or modify
@@ -21,23 +34,12 @@ cf. 3rd-party-licenses.txt in root directory.
 """
 
 
-
-
-import functools
-import logging
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.parallel._functions import Broadcast
-import scipy.special
-import copy
-from metanas.models import ops
-from metanas.utils import genotypes as gt
 def SoftMax(logits, params, dim=-1):
 
     # temperature annealing
     if params["temp_anneal_mode"] == "linear":
-        # linear temperature annealing (Note: temperature -> zero results in softmax -> argmax)
+        # linear temperature annealing (Note: temperature -> zero
+        # results in softmax -> argmax)
         temperature = params["t_max"] - params["curr_step"] * (
             params["t_max"] - params["t_min"]
         ) / (params["max_steps"] - 1)
@@ -59,7 +61,8 @@ def GumbelSoftMax(logits, params, dim=-1):
 
     # temperature annealing
     if params["temp_anneal_mode"] == "linear":
-        # linear temperature annealing (Note: temperature -> zero results in softmax -> argmax)
+        # linear temperature annealing (Note: temperature -> zero
+        # results in softmax -> argmax)
         temperature = params["t_max"] - params["curr_step"] * (
             params["t_max"] - params["t_min"]
         ) / (params["max_steps"] - 1)
@@ -123,12 +126,6 @@ class SearchCNNController(nn.Module):
         # Previously, adjust for progressive DARTS,
         # old, n_ops = len(PRIMITIVES)
         self.primitives = PRIMITIVES
-
-        # switch_ons = []
-        # Original code from P-DARTS
-        # for i, switch in enumerate(switches_normal):
-        #     ons = sum(list(map(int, switch)))
-        #     switch_ons.append(ons)
 
         # checks how many ops to enable
         n_ops = sum(list(map(int, switches_normal[0])))
@@ -236,6 +233,15 @@ class SearchCNNController(nn.Module):
             weights_pw_normal,
             weights_pw_reduce,
         )
+
+    def reduce_operations(self, switches_normal, switches_reduce):
+
+        weights_normal = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_normal]
+        weights_reduce = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_reduce]
+        weights_normal = np.concatenate(weights_normal, axis=0)
+        weights_reduce = np.concatenate(weights_reduce, axis=0)
 
     def prune_alphas(self, prune_threshold=0.0, val=-10e8):
         """Set the alphas with probability below prune_threshold to a \
@@ -440,7 +446,8 @@ class SearchCNNController(nn.Module):
                         none_active_ops = none_active_ops_reduce
 
                 if any(
-                    [none_active_op in layer_name for none_active_op in none_active_ops]
+                    [none_active_op in layer_name for none_active_op in
+                        none_active_ops]
                 ):  # check if layer is part of none-active ops
                     none_active_params += layer_weights.numel()
 
@@ -450,8 +457,12 @@ class SearchCNNController(nn.Module):
 
     def drop_path_prob(self, p):
         """ Set drop path probability """
+        # P-DARTS, set the Dropout variable for nn.Dropout after
+        # the skip-connection instead of DropPath
+
         for module in self.net.modules():
-            if isinstance(module, ops.DropPath_):
+            if isinstance(module, ops.DropPath_) or \
+                    isinstance(module, nn.Dropout):
                 module.p = p
 
     def forward(self, x, sparsify_input_alphas=None):
@@ -459,14 +470,15 @@ class SearchCNNController(nn.Module):
 
         Args:
             x: The input tensor
-            sparsify_input_alphas: Whether to sparsify the alphas over the input nodes. Use `None`
-                to not sparsify input alphas.
-                For hierarchical alphas, `sparsify_input_alphas` should be a (float) threshold on
-                the probability (i.e. between 0 and 1). Alphas above the threshold (and thus the
-                corresponding input nodes) are kept.
-                For pairwise alphas, if `sparsify_input_alphas` is larger than 0, then only the
-                largest alpha is kept.
-                Note that the sparsification is not be differentiable and thus cannot be used during
+            sparsify_input_alphas: Whether to sparsify the alphas over the
+                input nodes. Use `None` to not sparsify input alphas. For
+                hierarchical alphas, `sparsify_input_alphas` should be a
+                (float) threshold on the probability (i.e. between 0 and 1).
+                Alphas above the threshold (and thus the corresponding
+                input nodes) are kept. For pairwise alphas, if
+                `sparsify_input_alphas` is larger than 0, then only the
+                largest alpha is kept. Note that the sparsification is not
+                be differentiable and thus cannot be used during
                 training.
 
         Returns:
@@ -564,34 +576,37 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, switches_normal=None, switches_reduce=None, limit_skip_connections=None):
-        # TODO: Skipped for now TODO: see below,
-        # if self.use_pairwise_input_alphas:
-        #     # TODO: Implement for pairwise alphas as well?
+    def genotype(self, config=None, switches_normal=None, switches_reduce=None,
+                 limit_skip_connections=None, normal_prob=None,
+                 reduce_prob=None):
 
-        #     weights_pw_normal = [
-        #         F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
-        #     ]
-        #     weights_pw_reduce = [
-        #         F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
-        #     ]
+        # TODO: Implement for staging for pairwise alphas
+        if self.use_pairwise_input_alphas and switches_normal is None:
 
-        #     gene_normal = gt.parse_pairwise(
-        #         self.alpha_normal, weights_pw_normal, primitives=self.primitives
-        #     )
-        #     gene_reduce = gt.parse_pairwise(
-        #         self.alpha_reduce, weights_pw_reduce, primitives=self.primitives
-        #     )
+            weights_pw_normal = [
+                F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
+            ]
+            weights_pw_reduce = [
+                F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
+            ]
 
-        # elif
-        if self.use_hierarchical_alphas:
+            gene_normal = gt.parse_pairwise(
+                self.alpha_normal, weights_pw_normal,
+                primitives=self.primitives
+            )
+            gene_reduce = gt.parse_pairwise(
+                self.alpha_reduce, weights_pw_reduce,
+                primitives=self.primitives
+            )
+        elif self.use_hierarchical_alphas:
             raise NotImplementedError
-        else:
+        elif switches_normal is not None and switches_reduce is not None:
+            # TODO: Match this approach with the original approach
             def _parse_switches(switches):
                 n = 2
                 start = 0
                 gene = []
-                step = self.n_nodes
+                step = self.n_nodes-1
                 for i in range(step):
                     end = start + n
                     for j in range(start, end):
@@ -602,32 +617,41 @@ class SearchCNNController(nn.Module):
                     n = n + 1
                 return gene
 
-            gene_normal = _parse_switches(switches_normal)
-            gene_reduce = _parse_switches(switches_reduce)
+            # gene_normal = _parse_switches(switches_normal)
+            # gene_reduce = _parse_switches(switches_reduce)
 
-            # TODO: Match old approach,
+            # TODO: old approach,
             # gene_normal = gt.parse(
             #     self.alpha_normal, k=2, primitives=self.primitives)
             # gene_reduce = gt.parse(
             #     self.alpha_reduce, k=2, primitives=self.primitives)
 
             config.logger.info('Restricting skipconnect...')
-            # generating genotypes with different numbers of skip-connect operations
-            for sks in range(0, 9):
-                max_sk = 8 - sks
-                num_sk = check_sk_number(switches_normal)
-                if not num_sk > max_sk:
-                    continue
-                while num_sk > max_sk:
-                    normal_prob = delete_min_sk_prob(
-                        switches_normal, switches_normal_2, normal_prob)
-                    switches_normal = keep_1_on(switches_normal_2, normal_prob)
-                    switches_normal = keep_2_branches(
-                        switches_normal, normal_prob)
-                    num_sk = check_sk_number(switches_normal)
-                config.logger.info('Number of skip-connect: %d', max_sk)
-                genotype = parse_network(switches_normal, switches_reduce)
-                config.logger.info(genotype)
+
+            # generating genotypes with different numbers of skip-connect
+            # operations
+            # print(switches_normal, np.array(switches_normal).shape)
+            # print("\n")
+            # print(switches_reduce, np.array(switches_reduce).shape)
+            # print(str(normal_prob), np.array(normal_prob).shape)
+            # print(str(reduce_prob), np.array(reduce_prob).shape)
+            # for sks in range(7):
+            #     max_sk = 6 - sks
+            #     num_sk = check_sk_number(switches_normal)
+            #     if not num_sk > max_sk:
+            #         continue
+            #     while num_sk > max_sk:
+            #         normal_prob = delete_min_sk_prob(
+            #             switches_normal, switches_normal, normal_prob)
+            #         switches_normal = keep_1_on(switches_normal, normal_prob)
+            #         switches_normal = keep_2_branches(
+            #             switches_normal, normal_prob)
+            #         num_sk = check_sk_number(switches_normal)
+            #     config.logger.info('Number of skip-connect: %d', max_sk)
+
+            #     gene_normal = _parse_switches(switches_normal)
+            #     gene_reduce = _parse_switches(switches_reduce)
+            # config.logger.info(genotype)
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 
@@ -721,7 +745,8 @@ class SearchCNN(nn.Module):
         print(f"Reduction layers: {reduction_layers}")
 
         # for the first cell, stem is used for both s0 and s1
-        # [!] C_pp and C_p is output channel size, but C_cur is input channel size.
+        # [!] C_pp and C_p is output channel size, but C_cur is input
+        # channel size.
         C_pp, C_p, C_cur = C_cur, C_cur, C
 
         self.cells = nn.ModuleList()
@@ -740,6 +765,7 @@ class SearchCNN(nn.Module):
 
             reduction_p = reduction
             self.cells.append(cell)
+
             C_cur_out = C_cur * n_nodes
             C_pp, C_p = C_p, C_cur_out
 
@@ -762,35 +788,43 @@ class SearchCNN(nn.Module):
 
         Args:
             x: The network input
-            weights_normal: The alphas over operations for normal cells
-            weights_reduce:The alphas over operations for reduction cells
-            weights_in_normal: The alphas over inputs for normal cells (hierarchical alphas)
-            weights_in_reduce: The alphas over inputs for reduction cells (hierarchical alphas)
-            weights_pw_normal: The alphas over pairs of inputs for normal cells (pairwise alphas)
-            weights_pw_reduce: The alphas over pairs of inputs for recution cells (pairwise alphas)
-            sparsify_input_alphas: Whether to sparsify the alphas over the input nodes. Use `None`
-                to not sparsify input alphas.
-                For hierarchical alphas, `sparsify_input_alphas` should be a (float) threshold on
-                the probability (i.e. between 0 and 1). Alphas above the threshold (and thus the
-                corresponding input nodes) are kept.
-                For pairwise alphas, if `sparsify_input_alphas` is larger than 0, then only the
-                largest alpha is kept.
-                Note that the sparsification is not be differentiable and thus cannot be used during
-                training.
+            weights_normal: The alphas over operations for normal
+                cells
+            weights_reduce:The alphas over operations for reduction
+                cells
+            weights_in_normal: The alphas over inputs for normal cells
+                (hierarchical alphas)
+            weights_in_reduce: The alphas over inputs for reduction cells
+                (hierarchical alphas)
+            weights_pw_normal: The alphas over pairs of inputs for normal
+                cells (pairwise alphas)
+            weights_pw_reduce: The alphas over pairs of inputs for recution
+                cells (pairwise alphas)
+            sparsify_input_alphas: Whether to sparsify the alphas over the
+                input nodes. Use `None` to not sparsify input alphas.
+                For hierarchical alphas, `sparsify_input_alphas` should be a
+                (float) threshold on the probability (i.e. between 0 and 1).
+                Alphas above the threshold (and thus the corresponding
+                input nodes) are kept. For pairwise alphas, if
+                `sparsify_input_alphas` is larger than 0, then only the
+                largest alpha is kept. Note that the sparsification is not
+                be differentiable and thus cannot be used during training.
 
         Returns:
             The network output
 
         Note:
-            Hierarchical and pairwise alphas are exclusive and only one of those can be specified
-            (i.e. not None). Note that both hierarchical and pairwise alphas can be None.
+            Hierarchical and pairwise alphas are exclusive and only one of
+            those can be specified (i.e. not None). Note that both
+            hierarchical and pairwise alphas can be None.
 
         """
         s0 = s1 = self.stem(x)
 
         if sparsify_input_alphas:
 
-            # always sparsify edge alphas (keep only edge with max prob for each previous node)
+            # always sparsify edge alphas (keep only edge with max
+            # prob for each previous node)
             weights_normal = sparsify_alphas(weights_normal)
             weights_reduce = sparsify_alphas(weights_reduce)
 
@@ -807,8 +841,10 @@ class SearchCNN(nn.Module):
 
         for cell in self.cells:
             weights = weights_reduce if cell.reduction else weights_normal
-            weights_in = weights_in_reduce if cell.reduction else weights_in_normal
-            weights_pw = weights_pw_reduce if cell.reduction else weights_pw_normal
+            weights_in = weights_in_reduce if cell.reduction \
+                else weights_in_normal
+            weights_pw = weights_pw_reduce if cell.reduction \
+                else weights_pw_normal
             s0, s1 = s1, cell(
                 s0,
                 s1,
@@ -827,7 +863,8 @@ class SearchCNN(nn.Module):
 def sparsify_alphas(w_input):
     """Sparsify regular (normalized) alphas
 
-    Alphas are sparsified by keeping only the largest alpha for each previous node.
+    Alphas are sparsified by keeping only the largest alpha for each
+    previous node.
 
     Args:
         w_input: The list of alphas for each node in a cell
@@ -847,17 +884,19 @@ def sparsify_alphas(w_input):
 def sparsify_hierarchical_alphas(w_input, threshold):  # deprecated
     """Sparsify hierarchical (normalized) alphas
 
-    Alphas are sparsified by keeping only alphas above a threshold but at least the largest one
+    Alphas are sparsified by keeping only alphas above a threshold but
+    at least the largest one
 
     Args:
         w_input: The list of hierarchical alphas for each node in a cell
-        threshold: The threshold (between 0 and 1) above which input nodes are kept.
+        threshold: The threshold (between 0 and 1) above which input
+            nodes are kept.
 
     Returns: The modified input list.
 
     Note:
-        If there is no alpha above the threshold but multiple maximal values, then the last one is
-        used (returned by `torch.max(t, 0)`)
+        If there is no alpha above the threshold but multiple maximal
+        values, then the last one is used (returned by `torch.max(t, 0)`)
     """
     for node_idx in range(len(w_input)):
         # w_node_in is of shape (num_input_nodes)x1
@@ -884,8 +923,8 @@ def sparsify_pairwise_alphas(w_input):
         The modified input list.
 
     Note:
-        If there are multiple maximal values, then the last one is used (returned by
-        `torch.max(t, 0)`)
+        If there are multiple maximal values, then the last one is used
+        (returned by `torch.max(t, 0)`)
     """
     for node_idx in range(len(w_input)):
         val, idx = torch.max(w_input[node_idx], 0)
@@ -899,30 +938,37 @@ class SearchCell(nn.Module):
     Each edge is mixed and continuous relaxed.
 
     Attributes:
-        dag: List of lists where the out list corresponds to intermediate nodes in a cell. The inner
-            list contains the mixed operations for each input node of an intermediate node (i.e.
-            dag[i][j] calculates the outputs of the i-th intermediate node for its j-th input).
+        dag: List of lists where the out list corresponds to intermediate
+            nodes in a cell. The inner list contains the mixed operations
+            for each input node of an intermediate node (i.e. dag[i][j]
+            calculates the outputs of the i-th intermediate node for its
+            j-th input).
         preproc0: Preprocessing operation for the s0 input
         preproc1: Preprocessing operation for the s1 input
     """
 
-    def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction, PRIMITIVES, switches):
+    def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction,
+                 PRIMITIVES, switches):
         """
         Args:
-            n_nodes: Number of intermediate n_nodes. The output of the cell is calculated by
-                concatenating the outputs of all intermediate nodes in the cell.
+            n_nodes: Number of intermediate n_nodes. The output of the
+                cell is calculated by concatenating the outputs of all
+                intermediate nodes in the cell.
             C_pp (int): C_out[k-2]
             C_p (int) : C_out[k-1]
             C (int)   : C_in[k] (current)
-            reduction_p: flag for whether the previous cell is reduction cell or not
-            reduction: flag for whether the current cell is reduction cell or not
+            reduction_p: flag for whether the previous cell is reduction
+                cell or not
+            reduction: flag for whether the current cell is reduction
+                cell or not
         """
         super().__init__()
         self.reduction = reduction
         self.n_nodes = n_nodes
 
-        # If previous cell is reduction cell, current input size does not match with
-        # output size of cell[k-2]. So the output[k-2] should be reduced by preprocessing.
+        # If previous cell is reduction cell, current input size does
+        # not match with output size of cell[k-2]. So the output[k-2]
+        # should be reduced by preprocessing.
         if reduction_p:
             self.preproc0 = ops.FactorizedReduce(C_pp, C, affine=False)
         else:
@@ -931,7 +977,6 @@ class SearchCell(nn.Module):
 
         # generate dag
         self.dag = nn.ModuleList()
-        # TODO: Refactor
         switch_count = 0
         for i in range(self.n_nodes):
             self.dag.append(nn.ModuleList())
@@ -952,15 +997,20 @@ class SearchCell(nn.Module):
         Args:
             s0: Output of the k-2 cell
             s1: Output of the k-1 cell
-            w_dag: MixedOp weights ("alphas") (e.g. for n nodes and k primitive operations should be
-                a list of length `n` of parameters where the n-th parameter has shape
-                :math:`(n+2)xk = (number of inputs to the node) x (primitive operations)`)
-            w_input: Distribution over inputs for each node (e.g. for n nodes should be a list of
-                parameters of length `n`, where the n-th parameter has shape
+            w_dag: MixedOp weights ("alphas") (e.g. for n nodes and k
+                primitive operations should be a list of length `n`
+                of parameters where the n-th parameter has shape
+                :math:`(n+2)xk = (number of inputs to the node) x
+                (primitive operations)`)
+            w_input: Distribution over inputs for each node (e.g.
+                for n nodes should be a list of parameters of length
+                `n`, where the n-th parameter has shape
                 :math:`(n+2) = (number of inputs nodes)`).
-            w_pw: weights on pairwise inputs for soft-pruning of inputs (e.g. for n nodes should be
-                a list of parameters of length `n`, where the n-th parameter has shape
-                :math:`(n+2) choose 2 = (number of combinations of two input nodes)`)
+            w_pw: weights on pairwise inputs for soft-pruning of inputs
+                (e.g. for n nodes should be a list of parameters of length
+                `n`, where the n-th parameter has shape
+                :math:`(n+2) choose 2 = (number of combinations of two i
+                nput nodes)`)
             alpha_prune_threshold:
 
         Returns:
@@ -987,7 +1037,8 @@ class SearchCell(nn.Module):
 
                 # equivalent but harder to read:
                 # s_cur2 = sum(w2 * edges[i](s, w)
-                #             for i, (s, w, w2) in enumerate(zip(states, w_node_ops, w_node_in)))
+                #             for i, (s, w, w2) in enumerate(zip(states,
+                #                     w_node_ops, w_node_in)))
                 # assert torch.allclose(s_cur2, s_cur)
 
                 states.append(s_cur)
@@ -1003,7 +1054,8 @@ class SearchCell(nn.Module):
                 for i, (state_in, w_ops) in enumerate(zip(states, w_node_ops)):
 
                     input_cur = edges[i](
-                        state_in, w_ops, alpha_prune_threshold=alpha_prune_threshold
+                        state_in, w_ops,
+                        alpha_prune_threshold=alpha_prune_threshold
                     )
                     unariy_inputs.append(input_cur)
 
@@ -1041,3 +1093,102 @@ class SearchCell(nn.Module):
             states[2:], dim=1
         )  # concatenate all intermediate nodes except inputs
         return s_out
+
+
+def check_sk_number(switches):
+    count = 0
+    for i in range(len(switches)):
+        if switches[i][2]:  # Index of skip connection
+            count = count + 1
+
+    return count
+
+
+def delete_min_sk_prob(switches_in, switches_bk, probs_in):
+    def _get_sk_idx(switches_in, switches_bk, k):
+        if not switches_in[k][2]:
+            idx = -1
+        else:
+            idx = 0
+            for i in range(3):
+                if switches_bk[k][i]:
+                    idx = idx + 1
+        return idx
+    probs_out = copy.deepcopy(probs_in)
+    sk_prob = [1.0 for i in range(len(switches_bk))]
+    for i in range(len(switches_in)):
+        idx = _get_sk_idx(switches_in, switches_bk, i)
+        if not idx == -1:
+            sk_prob[i] = probs_out[i][idx]
+    d_idx = np.argmin(sk_prob)
+    idx = _get_sk_idx(switches_in, switches_bk, d_idx)
+    probs_out[d_idx][idx] = 0.0
+
+    return probs_out
+
+
+def keep_1_on(switches_in, probs):
+    switches = copy.deepcopy(switches_in)
+    for i in range(len(switches)):
+        idxs = []
+        for j in range(len(gt.PRIMITIVES_FEWSHOT)):
+            if switches[i][j]:
+                idxs.append(j)
+        drop = get_min_k_no_zero(probs[i, :], idxs, 2)
+        for idx in drop:
+            switches[i][idxs[idx]] = False
+    return switches
+
+
+def keep_2_branches(switches_in, probs):
+    switches = copy.deepcopy(switches_in)
+    final_prob = [0.0 for i in range(len(switches))]
+    for i in range(len(switches)):
+        final_prob[i] = max(probs[i])
+    keep = [0, 1]
+    n = 3
+    start = 2
+    for i in range(3):
+        end = start + n
+        tb = final_prob[start:end]
+        edge = sorted(range(n), key=lambda x: tb[x])
+        keep.append(edge[-1] + start)
+        keep.append(edge[-2] + start)
+        start = end
+        n = n + 1
+    for i in range(len(switches)):
+        if not i in keep:
+            for j in range(len(gt.PRIMITIVES_FEWSHOT)):
+                switches[i][j] = False
+    return switches
+
+
+def get_min_k(input_in, k):
+    input = copy.deepcopy(input_in)
+    index = []
+    for i in range(k):
+        idx = np.argmin(input)
+        index.append(idx)
+        input[idx] = 1
+
+    return index
+
+
+def get_min_k_no_zero(w_in, idxs, k):
+    w = copy.deepcopy(w_in)
+    index = []
+    if 0 in idxs:
+        zf = True
+    else:
+        zf = False
+    if zf:
+        w = w[1:]
+        index.append(0)
+        k = k - 1
+    for i in range(k):
+        idx = np.argmin(w)
+        w[idx] = 1
+        if zf:
+            idx = idx + 1
+        index.append(idx)
+    return index
