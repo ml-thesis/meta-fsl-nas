@@ -76,7 +76,7 @@ def meta_architecture_search(
 
     # Discovered cells are allowed to keep M=2, skip connections.
     # Use these for my experiment, M = 2
-    config.number_of_skip_connections = 2
+    config.limit_skip_connections = 2
 
     # Initialize the variables for Search Space Approximation,
     # Original P-DARTS, There are 4 intermediate nodes in a cell,
@@ -520,12 +520,13 @@ def train(
             config.layers += config.add_layers
 
             # Increase initial channels
-            config.initial_channels = config.init_channels_stages[current_stage]
+            config.initial_channels = \
+                config.init_channels_stages[current_stage]
 
             # We reduce the operation space of O_k candidate operations, i.e.
             # |O^k_(i,j)| = O_k > O_k-1
-            config.switches_normal, config.switches_reduce = reduce_operations(
-                config, meta_model, current_stage+1)
+            config.switches_normal, config.switches_reduce = \
+                meta_model.reduce_operations(config, current_stage+1)
 
             # TODO: Possibly keep the meta-weights here instead of re-init?
             meta_model = _build_model(config, task_distribution, normalizer,
@@ -614,6 +615,10 @@ def train(
             global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
             task_infos = []
 
+            # P-Darts, limit the skip connections in the last stage
+            last_stage = current_stage+1 == config.architecture_stages
+            skip_con = config.limit_skip_connections
+
             for task in meta_test_batch:
                 task_infos += [
                     task_optimizer.step(
@@ -621,6 +626,7 @@ def train(
                         epoch=meta_epoch,
                         global_progress=global_progress,
                         test_phase=True,
+                        limit_skip_connections=skip_con if last_stage else None
                     )
                 ]
                 meta_model.load_state_dict(meta_state)
@@ -646,10 +652,11 @@ def train(
             task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
             task_optimizer.a_optim.load_state_dict(meta_optims_state[3])
 
+            print(meta_model.genotype())
             # save checkpoint
             experiment = {
                 "genotype": [task_info.genotype for task_info in task_infos],
-                "meta_genotype": meta_model.genotype(),
+                "meta_genotype": meta_model.genotype(skip_con if last_stage else None),
                 "alphas": [alpha for alpha in meta_model.alphas()],
             }
             experiment.update(train_info)
@@ -685,55 +692,12 @@ def train(
         job_id=config.job_id
     )
 
-    # P-DARTS
-    # TODO: Last, Refactor this piece of code to the designated method and
-    # should this be done at all final stages of the meta learning or only the
-    # final meta-model?
-    # drop operations with low architecture weights
-    normal_alphas, reduce_alphas = meta_model.arch_parameters()
-
-    # TODO: Refactor to confirm the implementation of MetaNAS alphas,
-    # might need to get normalized alphas, e.g. normalizer() or
-    # _get_normalized_alphas() instead of hardcoded softmax
-    normal_prob = [F.softmax(alpha, dim=-1
-                             ).data.cpu().numpy() for alpha in normal_alphas]
-    normal_prob = np.concatenate(normal_prob, axis=0)
-
-    reduce_prob = [F.softmax(alpha, dim=-1
-                             ).data.cpu().numpy() for alpha in reduce_alphas]
-    reduce_prob = np.concatenate(reduce_prob, axis=0)
-
-    # TODO: If None in primitives set this probability to zero first.
-
-    # Hardcoded amount of operations to keep,
-    # TODO: Adjust to correct amount
-    k = 2
-    normal_top_k = [(-row).argsort()[:k] for row in normal_prob]
-    reduce_top_k = [(-row).argsort()[:k] for row in reduce_prob]
-
-    # create placeholder for final switches
-    final_s_normal = np.full(
-        np.array(config.switches_reduce).shape, False).tolist()
-    final_s_reduce = np.full(
-        np.array(config.switches_normal).shape, False).tolist()
-
-    for i, (s_normal, s_reduce) in enumerate(zip(final_s_normal,
-                                                 final_s_reduce)):
-        for j in range(k):
-            s_normal[normal_top_k[i][j]] = True
-            s_reduce[reduce_top_k[i][j]] = True
-
-    # Parse the network in the genotype call, TODO: Fix the usage of
-    # pairwise alphas
-    # TODO: Prune skip connections of the graph
-    # config,
-    # final_s_normal,
-    # final_s_reduce,
-    # limit_skip_connections=config.number_of_skip_connections,
-    # normal_prob=normal_prob,
-    # reduce_prob=reduce_prob)
+    # P-DARTS, final stage for meta-learning model, we limit the skip
+    # connections
+    print(meta_model.genotype())
     experiment = {
-        "meta_genotype": meta_model.genotype(),
+        "meta_genotype": meta_model.genotype(
+            limit_skip_connections=config.limit_skip_connections),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
     experiment.update(train_info)
@@ -834,102 +798,18 @@ def _str_or_none(x):
     """Convert multiple possible input strings to None"""
     return None if (x is None or not x or x.capitalize() == "None") else x
 
-# Methods taken from P-DARTS,
-
 
 def init_switches(edges):
-    # Initalize switches for Search Space Approximation,
-    # Originating from P-DARTS.
-
-    switches = []
-    for _ in range(edges):
-        switches.append([True for _ in range(len(gt.PRIMITIVES_FEWSHOT))])
-    switches_normal = copy.deepcopy(switches)
-    switches_reduce = copy.deepcopy(switches)
+    """Initalize switches for Search Space Approximation,
+       originating from P-DARTS.
+    """
+    switches_normal = np.ones((edges,
+                               len(gt.PRIMITIVES_FEWSHOT)),
+                              dtype=bool).tolist()
+    switches_reduce = np.ones((edges,
+                               len(gt.PRIMITIVES_FEWSHOT)),
+                              dtype=bool).tolist()
     return switches_normal, switches_reduce
-
-
-def reduce_operations(config, meta_model, current_stage):
-    # We reduce the operation space of O_k candidate operations, i.e.
-    # |O^k_(i,j)| = O_k > O_k-1, where k is the arch stage
-    switches_normal = copy.deepcopy(config.switches_normal)
-    switches_reduce = copy.deepcopy(config.switches_reduce)
-    last_stage = current_stage == config.architecture_stages
-    # Number of operations to drop, -1 for the index
-    ops_drop = config.drop_number_operations[current_stage-1]
-
-    # drop operations with low architecture weights
-    normal_alphas, reduce_alphas = meta_model.arch_parameters()
-
-    # TODO: Refactor to confirm the implementation of MetaNAS alphas,
-    # might need to get normalized alphas, e.g. normalizer() or
-    # _get_normalized_alphas() instead of hardcoded softmax
-    normal_prob = [F.softmax(alpha, dim=-1
-                             ).data.cpu().numpy() for alpha in normal_alphas]
-    normal_prob = np.concatenate(normal_prob, axis=0)
-    switches_normal = adjust_switches(normal_prob, switches_normal,
-                                      ops_drop, last_stage, config.edges)
-
-    reduce_prob = [F.softmax(alpha, dim=-1
-                             ).data.cpu().numpy() for alpha in reduce_alphas]
-    reduce_prob = np.concatenate(reduce_prob, axis=0)
-
-    switches_reduce = adjust_switches(reduce_prob, switches_reduce,
-                                      ops_drop, last_stage, config.edges)
-    return switches_normal, switches_reduce
-
-
-def adjust_switches(prob, switches, ops_drop, last_stage, edges):
-
-    # TODO: P-DARTS make these edges configurable
-    # Original P-DARTS, There are 4 intermediate nodes in a cell,
-    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-    # number of edges in a cell.
-    for i in range(edges):
-        idxs = []
-        for j in range(len(gt.PRIMITIVES_FEWSHOT)):
-            if switches[i][j]:
-                idxs.append(j)
-        if last_stage:
-            # for the last stage, drop all Zero operations
-            drop = get_min_k_no_zero(
-                prob[i, :], idxs, ops_drop)
-        else:
-            drop = get_min_k(prob[i, :], ops_drop)
-        for idx in drop:
-            switches[i][idxs[idx]] = False
-    return switches
-
-
-def get_min_k(input_in, k):
-    input = copy.deepcopy(input_in)
-    index = []
-    for i in range(k):
-        idx = np.argmin(input)
-        index.append(idx)
-        input[idx] = 1
-
-    return index
-
-
-def get_min_k_no_zero(w_in, idxs, k):
-    w = copy.deepcopy(w_in)
-    index = []
-    if 0 in idxs:
-        zf = True
-    else:
-        zf = False
-    if zf:
-        w = w[1:]
-        index.append(0)
-        k = k - 1
-    for i in range(k):
-        idx = np.argmin(w)
-        w[idx] = 1
-        if zf:
-            idx = idx + 1
-        index.append(idx)
-    return index
 
 
 if __name__ == "__main__":

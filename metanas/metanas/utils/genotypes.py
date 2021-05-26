@@ -1,3 +1,9 @@
+from collections import namedtuple
+import torch
+import torch.nn as nn
+from metanas.models import ops, search_cnn
+Genotype = namedtuple("Genotype", "normal normal_concat reduce reduce_concat")
+
 """ Genotypes
 Copyright (c) 2021 Robert Bosch GmbH
 
@@ -20,16 +26,10 @@ cf. 3rd-party-licenses.txt in root directory.
 """
 
 
-from collections import namedtuple
-import torch
-import torch.nn as nn
-from metanas.models import ops, search_cnn
-Genotype = namedtuple("Genotype", "normal normal_concat reduce reduce_concat")
-
-
-""" Genotype of the Auto-Meta paper https://arxiv.org/pdf/1806.06927.pdf 
-Note: According to their figues, it should be normal_concat = reduce_concat = range(0,7), 
-which is currently not supporeted (fully) by our implemention)
+""" Genotype of the Auto-Meta paper https://arxiv.org/pdf/1806.06927.pdf
+Note: According to their figues, it should be normal_concat =
+reduce_concat = range(0,7), which is currently not supporeted (fully) by
+our implemention)
 """
 
 genotype_auto_meta = Genotype(
@@ -134,7 +134,8 @@ def to_dag(C_in, gene, reduction):
             # reduction cell & from input nodes => stride = 2
             stride = 2 if reduction and s_idx < 2 else 1
             op = ops.OPS[op_name](C_in, stride, True)
-            if not isinstance(op, ops.Identity):  # Identity does not use drop path
+            # Identity does not use drop path
+            if not isinstance(op, ops.Identity):
                 op = nn.Sequential(op, ops.DropPath_())
             op.s_idx = s_idx
             row.append(op)
@@ -157,9 +158,7 @@ def from_str(s):
                     [('max_pool_3x3', 0), ('skip_connect', 2)]],
             reduce_concat=range(2, 6))"
     """
-
     genotype = eval(s)
-
     return genotype
 
 
@@ -181,11 +180,44 @@ def parse(alpha, k, primitives=PRIMITIVES_FEWSHOT):
     ]
     each node has two edges (k=2) in CNN.
     """
+    # TODO: Code snippet to add switches and pick the right primitives
+    # easily extendable to pairwise alphas.
+    # gene = []
+    # k = 2
+    # j = 0
+
+    # for edge_i, edges in enumerate(alpha):
+    #     # TODO: These primitive indices don't correspond to the actual
+    #     # primitive. k=1 here.
+    #     edge_max, _ = torch.topk(edges[:, :], 1)
+
+    #     topk_edge_values, topk_edge_indices = torch.topk(edge_max.view(-1), k)
+    #     # print(edge_max) # Max alpha value for the edge
+
+    #     # Primitive indices which are enabled
+    #     primitives_enabled = []
+    #     for _ in range(len(edges)):
+    #         prim_indices = np.where(switches_normal[j])[0]
+    #         # The primitive operations which are enabled
+    #         primitives_enabled.append([primitives[i] for i in prim_indices])
+    #         j += 1
+
+    #     # For each edge the highest alpha primitive indice
+    #     node_gene = []
+    #     for edge_idx in topk_edge_indices:
+    #         prim = primitives_enabled[edge_idx][prim_idx]
+    #         node_gene.append((prim, edge_idx.item()))
+
+    #     gene.append(node_gene)
+
+    # gene
 
     gene = []
-    # assert PRIMITIVES_FEWSHOT[-1] == "none"  # assume last PRIMITIVE is 'none'
+    # assert PRIMITIVES_FEWSHOT[-1] == "none"  # assume last PRIMITIVE
+    # is 'none'
 
-    # 1) Convert the mixed op to discrete edge (single op) by choosing top-1 weight edge
+    # 1) Convert the mixed op to discrete edge (single op) by choosing
+    #    top-1 weight edge
     # 2) Choose top-k edges per node by edge score (top-1 weight in edge)
     for edges in alpha:
         # edges: Tensor(n_edges, n_ops)
@@ -204,8 +236,8 @@ def parse(alpha, k, primitives=PRIMITIVES_FEWSHOT):
     return gene
 
 
-def parse_pairwise(alpha, alpha_pairwise, primitives=PRIMITIVES_FEWSHOT):  # deprecated
-    """Parse continous alpha to a discrete gene
+def parse_pairwise(alpha, alpha_pairwise, primitives=PRIMITIVES_FEWSHOT):
+    """Parse continous alpha to a discrete gene, is deprecated?
 
     alpha is ParameterList:
     ParameterList [
@@ -250,8 +282,8 @@ def parse_pairwise(alpha, alpha_pairwise, primitives=PRIMITIVES_FEWSHOT):  # dep
         top_inputs = []
         pw_idx = 0  # find the best two inputs from pairwise alphas
 
-        # iterate through possible inputs and check which to use (correct one = only combination
-        # without zero alpha)
+        # iterate through possible inputs and check which to use
+        # (correct one = only combination without zero alpha)
         for input_1 in range(len(edges)):
             for input_2 in range(input_1 + 1, len(edges)):
                 if pw_edges[pw_idx] > 0:

@@ -234,17 +234,59 @@ class SearchCNNController(nn.Module):
             weights_pw_reduce,
         )
 
-    def reduce_operations(self, switches_normal, switches_reduce):
+    def reduce_operations(self, config, current_stage):
+        """P-DARTS, Obtain alpha weights to reduce the operations by the specified
+            amount for the current stage.
+        """
+        switches_normal = copy.deepcopy(config.switches_normal)
+        switches_reduce = copy.deepcopy(config.switches_reduce)
+
+        # TODO: Add again if we consider the None operations
+        # last_stage = current_stage == config.architecture_stages
+
+        # Number of operations to drop, -1 for the index
+        ops_drop = config.drop_number_operations[current_stage-1]
 
         weights_normal = [self.apply_normalizer(
-            alpha) for alpha in self.alpha_normal]
+            alpha).data.cpu().numpy() for alpha in self.alpha_normal]
         weights_reduce = [self.apply_normalizer(
-            alpha) for alpha in self.alpha_reduce]
+            alpha).data.cpu().numpy() for alpha in self.alpha_reduce]
+
         weights_normal = np.concatenate(weights_normal, axis=0)
         weights_reduce = np.concatenate(weights_reduce, axis=0)
 
+        switches_reduce = self._adjust_switches(weights_normal, switches_reduce,
+                                                ops_drop, config.edges)
+
+        switches_normal = self._adjust_switches(weights_reduce, switches_normal,
+                                                ops_drop, config.edges)
+        return switches_normal, switches_reduce
+
+    def _adjust_switches(self, weights, switches, ops_drop,
+                         edges):
+
+        # Original P-DARTS, There are 4 intermediate nodes in a cell,
+        # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+        # number of edges in a cell.
+        for i in range(edges):
+            idxs = np.where(switches[i])[0].tolist()
+
+            # TODO: If None in primitives, add check for this operation
+            # if last_stage:
+            #     # for the last stage, drop all Zero operations
+            #     drop = self._get_min_k_no_zero(
+            #         weights[i, :], idxs, ops_drop)
+            # else:
+
+            # get minimum k (ops_drop) from the weights
+            # original code, drop = get_min_k(prob[i, :], ops_drop)
+            drop = np.array(weights[i, :]).argsort()[:ops_drop]
+            for idx in drop:
+                switches[i][idxs[idx]] = False
+        return switches
+
     def prune_alphas(self, prune_threshold=0.0, val=-10e8):
-        """Set the alphas with probability below prune_threshold to a \
+        """Set the alphas with probability below prune_threshold to a
         large negative value
 
         Note:
@@ -576,13 +618,9 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, config=None, switches_normal=None, switches_reduce=None,
-                 limit_skip_connections=None, normal_prob=None,
-                 reduce_prob=None):
-
+    def genotype(self, limit_skip_connections=None):
         # TODO: Implement for staging for pairwise alphas
-        if self.use_pairwise_input_alphas and switches_normal is None:
-
+        if self.use_pairwise_input_alphas:
             weights_pw_normal = [
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
             ]
@@ -600,33 +638,11 @@ class SearchCNNController(nn.Module):
             )
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
-        elif switches_normal is not None and switches_reduce is not None:
-            # TODO: Match this approach with the original approach
-            def _parse_switches(switches):
-                n = 2
-                start = 0
-                gene = []
-                step = self.n_nodes-1
-                for i in range(step):
-                    end = start + n
-                    for j in range(start, end):
-                        for k in range(len(switches[j])):
-                            if switches[j][k]:
-                                gene.append((self.primitives[k], j - start))
-                    start = end
-                    n = n + 1
-                return gene
-
-            # gene_normal = _parse_switches(switches_normal)
-            # gene_reduce = _parse_switches(switches_reduce)
-
-            # TODO: old approach,
-            # gene_normal = gt.parse(
-            #     self.alpha_normal, k=2, primitives=self.primitives)
-            # gene_reduce = gt.parse(
-            #     self.alpha_reduce, k=2, primitives=self.primitives)
-
-            config.logger.info('Restricting skipconnect...')
+        else:
+            gene_normal = gt.parse(
+                self.alpha_normal, k=2, primitives=self.primitives)
+            gene_reduce = gt.parse(
+                self.alpha_reduce, k=2, primitives=self.primitives)
 
             # generating genotypes with different numbers of skip-connect
             # operations
@@ -1093,102 +1109,3 @@ class SearchCell(nn.Module):
             states[2:], dim=1
         )  # concatenate all intermediate nodes except inputs
         return s_out
-
-
-def check_sk_number(switches):
-    count = 0
-    for i in range(len(switches)):
-        if switches[i][2]:  # Index of skip connection
-            count = count + 1
-
-    return count
-
-
-def delete_min_sk_prob(switches_in, switches_bk, probs_in):
-    def _get_sk_idx(switches_in, switches_bk, k):
-        if not switches_in[k][2]:
-            idx = -1
-        else:
-            idx = 0
-            for i in range(3):
-                if switches_bk[k][i]:
-                    idx = idx + 1
-        return idx
-    probs_out = copy.deepcopy(probs_in)
-    sk_prob = [1.0 for i in range(len(switches_bk))]
-    for i in range(len(switches_in)):
-        idx = _get_sk_idx(switches_in, switches_bk, i)
-        if not idx == -1:
-            sk_prob[i] = probs_out[i][idx]
-    d_idx = np.argmin(sk_prob)
-    idx = _get_sk_idx(switches_in, switches_bk, d_idx)
-    probs_out[d_idx][idx] = 0.0
-
-    return probs_out
-
-
-def keep_1_on(switches_in, probs):
-    switches = copy.deepcopy(switches_in)
-    for i in range(len(switches)):
-        idxs = []
-        for j in range(len(gt.PRIMITIVES_FEWSHOT)):
-            if switches[i][j]:
-                idxs.append(j)
-        drop = get_min_k_no_zero(probs[i, :], idxs, 2)
-        for idx in drop:
-            switches[i][idxs[idx]] = False
-    return switches
-
-
-def keep_2_branches(switches_in, probs):
-    switches = copy.deepcopy(switches_in)
-    final_prob = [0.0 for i in range(len(switches))]
-    for i in range(len(switches)):
-        final_prob[i] = max(probs[i])
-    keep = [0, 1]
-    n = 3
-    start = 2
-    for i in range(3):
-        end = start + n
-        tb = final_prob[start:end]
-        edge = sorted(range(n), key=lambda x: tb[x])
-        keep.append(edge[-1] + start)
-        keep.append(edge[-2] + start)
-        start = end
-        n = n + 1
-    for i in range(len(switches)):
-        if not i in keep:
-            for j in range(len(gt.PRIMITIVES_FEWSHOT)):
-                switches[i][j] = False
-    return switches
-
-
-def get_min_k(input_in, k):
-    input = copy.deepcopy(input_in)
-    index = []
-    for i in range(k):
-        idx = np.argmin(input)
-        index.append(idx)
-        input[idx] = 1
-
-    return index
-
-
-def get_min_k_no_zero(w_in, idxs, k):
-    w = copy.deepcopy(w_in)
-    index = []
-    if 0 in idxs:
-        zf = True
-    else:
-        zf = False
-    if zf:
-        w = w[1:]
-        index.append(0)
-        k = k - 1
-    for i in range(k):
-        idx = np.argmin(w)
-        w[idx] = 1
-        if zf:
-            idx = idx + 1
-        index.append(idx)
-    return index
