@@ -1,4 +1,7 @@
 from collections import namedtuple
+
+import numpy as np
+
 import torch
 import torch.nn as nn
 from metanas.models import ops, search_cnn
@@ -180,38 +183,6 @@ def parse(alpha, k, primitives=PRIMITIVES_FEWSHOT):
     ]
     each node has two edges (k=2) in CNN.
     """
-    # TODO: Code snippet to add switches and pick the right primitives
-    # easily extendable to pairwise alphas.
-    # gene = []
-    # k = 2
-    # j = 0
-
-    # for edge_i, edges in enumerate(alpha):
-    #     # TODO: These primitive indices don't correspond to the actual
-    #     # primitive. k=1 here.
-    #     edge_max, _ = torch.topk(edges[:, :], 1)
-
-    #     topk_edge_values, topk_edge_indices = torch.topk(edge_max.view(-1), k)
-    #     # print(edge_max) # Max alpha value for the edge
-
-    #     # Primitive indices which are enabled
-    #     primitives_enabled = []
-    #     for _ in range(len(edges)):
-    #         prim_indices = np.where(switches_normal[j])[0]
-    #         # The primitive operations which are enabled
-    #         primitives_enabled.append([primitives[i] for i in prim_indices])
-    #         j += 1
-
-    #     # For each edge the highest alpha primitive indice
-    #     node_gene = []
-    #     for edge_idx in topk_edge_indices:
-    #         prim = primitives_enabled[edge_idx][prim_idx]
-    #         node_gene.append((prim, edge_idx.item()))
-
-    #     gene.append(node_gene)
-
-    # gene
-
     gene = []
     # assert PRIMITIVES_FEWSHOT[-1] == "none"  # assume last PRIMITIVE
     # is 'none'
@@ -298,3 +269,150 @@ def parse_pairwise(alpha, alpha_pairwise, primitives=PRIMITIVES_FEWSHOT):
         gene.append(node_gene)
 
     return gene
+
+
+"""P-DARTS, addition of parsing the alphas including the switches
+"""
+
+
+def parse_switches(alpha, switches, k, primitives=PRIMITIVES_FEWSHOT):
+    """
+    parse continuous alpha to discrete gene.
+    alpha is ParameterList:
+    ParameterList [
+        Parameter(n_edges1, n_ops),
+        Parameter(n_edges2, n_ops),
+        ...
+    ]
+
+    gene is list:
+    [
+        [('node1_ops_1', node_idx), ..., ('node1_ops_k', node_idx)],
+        [('node2_ops_1', node_idx), ..., ('node2_ops_k', node_idx)],
+        ...
+    ]
+    each node has two edges (k=2) in CNN.
+    """
+    gene = []
+    j = 0
+
+    for edges in alpha:
+        # These primitive indices don't correspond to the actual
+        # primitive. k=1 here.
+        edge_max, primitive_indices = torch.topk(edges[:, :], 1)
+        topk_edge_values, topk_edge_indices = torch.topk(edge_max.view(-1), k)
+
+        # Primitive indices which are enabled
+        primitives_enabled = []
+        for _ in range(len(edges)):
+            prim_enabled_indices = np.where(switches[j])[0]
+            # The primitive operations which are enabled
+            primitives_enabled.append([
+                primitives[i] for i in prim_enabled_indices])
+            j += 1
+
+        # For each edge the highest alpha primitive indice
+        node_gene = []
+        for edge_idx in topk_edge_indices:
+            prim_idx = primitive_indices[edge_idx]
+            # print(edges)
+            # print(primitives_enabled)
+            # print(edge_idx, prim_idx[0])
+            # print(primitives_enabled[edge_idx][prim_idx[0]])
+            prim = primitives_enabled[edge_idx][prim_idx[0]]
+            node_gene.append((prim, edge_idx.item()))
+
+        gene.append(node_gene)
+    return gene
+
+
+def limit_skip_connections(alphas, switches, num_of_sk=2, nodes=3,
+                           k=2, primitives=PRIMITIVES):
+    sk_idx = primitives.index("skip_connect")
+    alpha_concat = np.concatenate(alphas, axis=0)
+
+    # skip-connections alpha indices
+    # edge index, skip-connection alpha_index
+    sk_indices = []
+    # alphas corresponding to the skip-connections
+    sk_alphas = []
+    for i, sw in enumerate(switches):
+        prim_indices = np.where(sw)[0]
+        # skip-connection index of alpha
+        sk_index = np.where(prim_indices == sk_idx)[0].tolist()
+        sk_indices.append([i, sk_index])
+
+        if len(sk_index) > 0:
+            sk_alphas.append(alpha_concat[i][sk_index][0])
+        else:  # If the skip-connection is not enabled, set to infinity.
+            sk_alphas.append(float("inf"))
+
+    # Number of skip-connections enabled in switches
+    # TODO: refactor to check based on gene
+    # num_sk_enabled = sum(np.array(switches)[:, sk_idx])
+    gene = parse_switches(alphas, switches, k=k)
+    num_sk_enabled = sum([1 for edge in gene
+                          for op in edge if op[0] == "skip_connect"])
+
+    sk_a = np.array(sk_alphas)
+
+    if num_sk_enabled < num_of_sk:
+        alphas = convert_tensor_alphas(alpha_concat)
+        gene = parse_switches(alphas, switches, k=k)
+        return gene
+
+    while num_sk_enabled > num_of_sk:
+        # Pick skip-connection index with lowest alpha
+        # value
+        idx = np.argmin(sk_a)
+        sk_a[idx] = float("inf")
+
+        # row index and alpha index
+        row_idx, alpha_idx = sk_indices[idx][0], sk_indices[idx][1][0]
+
+        # Set switch sk index to False
+        # switches[row_idx][sk_idx] = False
+
+        # set alphas to -inf to make sure, prevent it from
+        # being picked.
+        alpha_concat[row_idx][alpha_idx] = float("-inf")
+        alphas = convert_tensor_alphas(alpha_concat, nodes)
+
+        gene = parse_switches(alphas, switches, k=k)
+        num_sk_enabled = sum([1 for edge in gene
+                              for op in edge if op[0] == "skip_connect"])
+
+        if num_sk_enabled <= num_of_sk:
+            # return the new switches?
+            return gene
+
+
+def parse_pairwise_switches(alpha, switches, k, primitives=PRIMITIVES_FEWSHOT):
+    # TODO: If we want to include pairwise alphas for final models
+    return NotImplementedError
+
+
+def convert_tensor_alphas(alpha_concat, nodes=3):
+    alphas = []
+    for a_i in get_edge_indices(nodes):
+        alphas.append(
+            torch.Tensor(alpha_concat[a_i[0]:a_i[1]]))
+
+    # print(alpha_concat, alphas)
+    return alphas
+
+
+def get_edge_indices(nodes=3):
+    # Amount of nodes for each edge
+    j = [i for i in range(2, nodes+2)]
+
+    prev = 0
+    indices = []
+    for i in j:
+        if prev != 0:
+            indices.append((sum(j[:j.index(prev)+1]),
+                            sum(j[:j.index(i)+1])))
+        else:
+            indices.append((0, sum(j[:j.index(i)+1])))
+        prev = i
+    return indices

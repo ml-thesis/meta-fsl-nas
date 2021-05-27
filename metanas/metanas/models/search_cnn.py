@@ -618,9 +618,10 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, limit_skip_connections=None):
-        # TODO: Implement for staging for pairwise alphas
+    def genotype(self, switches_normal=None, switches_reduce=None,
+                 limit_skip_connections=None):
         if self.use_pairwise_input_alphas:
+            # TODO: Implement for staging for pairwise alphas
             weights_pw_normal = [
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
             ]
@@ -638,36 +639,28 @@ class SearchCNNController(nn.Module):
             )
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
+        elif switches_normal is not None and switches_reduce is not None:
+            gene_normal = gt.parse_switches(
+                self.alpha_normal, switches_normal, k=2,
+                primitives=self.primitives)
+            gene_reduce = gt.parse_switches(
+                self.alpha_reduce, switches_normal, k=2,
+                primitives=self.primitives)
+
+            if limit_skip_connections is not None:
+                # Limiting the skip connections, only applies to the normal
+                # alphas.
+                gene_normal = gt.limit_skip_connections(
+                    self.alpha_normal, switches_normal, k=2,
+                    primitives=self.primitives)
+
         else:
-            gene_normal = gt.parse(
-                self.alpha_normal, k=2, primitives=self.primitives)
-            gene_reduce = gt.parse(
-                self.alpha_reduce, k=2, primitives=self.primitives)
-
-            # generating genotypes with different numbers of skip-connect
-            # operations
-            # print(switches_normal, np.array(switches_normal).shape)
-            # print("\n")
-            # print(switches_reduce, np.array(switches_reduce).shape)
-            # print(str(normal_prob), np.array(normal_prob).shape)
-            # print(str(reduce_prob), np.array(reduce_prob).shape)
-            # for sks in range(7):
-            #     max_sk = 6 - sks
-            #     num_sk = check_sk_number(switches_normal)
-            #     if not num_sk > max_sk:
-            #         continue
-            #     while num_sk > max_sk:
-            #         normal_prob = delete_min_sk_prob(
-            #             switches_normal, switches_normal, normal_prob)
-            #         switches_normal = keep_1_on(switches_normal, normal_prob)
-            #         switches_normal = keep_2_branches(
-            #             switches_normal, normal_prob)
-            #         num_sk = check_sk_number(switches_normal)
-            #     config.logger.info('Number of skip-connect: %d', max_sk)
-
-            #     gene_normal = _parse_switches(switches_normal)
-            #     gene_reduce = _parse_switches(switches_reduce)
-            # config.logger.info(genotype)
+            # Original implementation without switches for operations,
+            # gene_normal = gt.parse(
+            #     self.alpha_normal, k=2, primitives=self.primitives)
+            # gene_reduce = gt.parse(
+            #     self.alpha_reduce, k=2, primitives=self.primitives)
+            raise NotImplementedError
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 

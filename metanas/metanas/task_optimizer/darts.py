@@ -66,7 +66,9 @@ class Darts:
         test_phase=False,
         alpha_logger=None,
         sparsify_input_alphas=None,
-        limit_skip_connections=None
+        switches_normal=None,
+        switches_reduce=None,
+        num_of_sk=None
     ):
 
         log_alphas = False
@@ -179,7 +181,13 @@ class Darts:
         )
 
         # Log genotype
-        genotype = self.model.genotype(limit_skip_connections)
+        if num_of_sk is not None:
+            genotype = self.model.genotype(switches_normal=switches_normal,
+                                           switches_reduce=switches_reduce,
+                                           limit_skip_connections=num_of_sk)
+        else:
+            genotype = self.model.genotype(switches_normal=switches_normal,
+                                           switches_reduce=switches_reduce)
 
         if log_alphas:
             alpha_logger["normal_relaxed"].append(

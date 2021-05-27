@@ -188,7 +188,8 @@ def meta_architecture_search(
 
     # save results
     experiment = {
-        "meta_genotype": meta_model.genotype(),
+        "meta_genotype": meta_model.genotype(switches_normal=config.switches_normal,
+                                             switches_reduce=config.switches_reduce),
         "alphas": [alpha for alpha in meta_model.alphas()],
         "final_eval_test_accu": config.top1_logger_test.avg,
         "final_eval_test_loss": config.losses_logger_test.avg,
@@ -561,7 +562,9 @@ def train(
         for task in meta_train_batch:
             task_infos += [
                 task_optimizer.step(
-                    task, epoch=meta_epoch, global_progress=global_progress
+                    task, epoch=meta_epoch, global_progress=global_progress,
+                    switches_normal=config.switches_normal,
+                    switches_reduce=config.switches_reduce
                 )
             ]
             meta_model.load_state_dict(meta_state)
@@ -617,18 +620,32 @@ def train(
 
             # P-Darts, limit the skip connections in the last stage
             last_stage = current_stage+1 == config.architecture_stages
-            skip_con = config.limit_skip_connections
 
             for task in meta_test_batch:
-                task_infos += [
-                    task_optimizer.step(
-                        task,
-                        epoch=meta_epoch,
-                        global_progress=global_progress,
-                        test_phase=True,
-                        limit_skip_connections=skip_con if last_stage else None
-                    )
-                ]
+                if not last_stage:
+                    task_infos += [
+                        task_optimizer.step(
+                            task,
+                            epoch=meta_epoch,
+                            global_progress=global_progress,
+                            test_phase=True,
+                            switches_normal=config.switches_normal,
+                            switches_reduce=config.switches_reduce
+                        )
+                    ]
+                elif last_stage:
+                    task_infos += [
+                        task_optimizer.step(
+                            task,
+                            epoch=meta_epoch,
+                            global_progress=global_progress,
+                            test_phase=True,
+                            switches_normal=config.switches_normal,
+                            switches_reduce=config.switches_reduce,
+                            num_of_sk=config.limit_skip_connections
+                        )
+                    ]
+
                 meta_model.load_state_dict(meta_state)
 
             config.logger.info(
@@ -652,11 +669,15 @@ def train(
             task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
             task_optimizer.a_optim.load_state_dict(meta_optims_state[3])
 
-            print(meta_model.genotype())
+            print(meta_model.genotype(switches_normal=config.switches_normal,
+                                      switches_reduce=config.switches_reduce))
             # save checkpoint
             experiment = {
                 "genotype": [task_info.genotype for task_info in task_infos],
-                "meta_genotype": meta_model.genotype(skip_con if last_stage else None),
+                "meta_genotype": meta_model.genotype(switches_normal=config.switches_normal,
+                                                     switches_reduce=config.switches_reduce,
+                                                     num_of_sk=config.limit_skip_connections,
+                                                     nodes=config.nodes),
                 "alphas": [alpha for alpha in meta_model.alphas()],
             }
             experiment.update(train_info)
@@ -697,6 +718,8 @@ def train(
     print(meta_model.genotype())
     experiment = {
         "meta_genotype": meta_model.genotype(
+            switches_normal=config.switches_normal,
+            switches_reduce=config.switches_reduce,
             limit_skip_connections=config.limit_skip_connections),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
@@ -768,6 +791,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
                     test_phase=True,
                     alpha_logger=alpha_logger,
                     sparsify_input_alphas=config.sparsify_input_alphas,
+                    switches_normal=config.switches_normal,
+                    switches_reduce=config.switches_reduce
                 )
             ]
             time_te = time.time()
