@@ -122,9 +122,16 @@ class Darts:
             )
 
         if self.config.drop_path_prob > 0.0:
-            # do drop path if not test phase (=in train phase) or if also use in test phase
+            # do drop path if not test phase (=in train phase) or if also use
+            # in test phase
             if not test_phase or self.config.use_drop_path_in_meta_testing:
                 self.model.drop_path_prob(self.config.drop_path_prob)
+
+            # Similar to drop path, do not use drop out skip-connections
+            # while in test phase
+            # TODO: Configure this possibly
+            if not test_phase:
+                self.model.drop_out_skip_connections(self.config.)
 
         # task train_steps = epochs per task
         for train_step in range(train_steps):
@@ -213,6 +220,8 @@ class Darts:
         # for test data evaluation, turn off drop path
         if self.config.drop_path_prob > 0.0:
             self.model.drop_path_prob(0.0)
+
+        # TODO: Also, remove skip-connection dropouts?
 
         with torch.no_grad():
 
