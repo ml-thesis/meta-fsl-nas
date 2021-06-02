@@ -96,7 +96,8 @@ class PoolBN(nn.Module):
     AvgPool or MaxPool - BN
     """
 
-    def __init__(self, pool_type, C, kernel_size, stride, padding, affine=True):
+    def __init__(self, pool_type, C, kernel_size, stride, padding,
+                 affine=True):
         """
         Args:
             pool_type: 'max' or 'avg'
@@ -124,7 +125,8 @@ class StdConv(nn.Module):
     ReLU - Conv - BN
     """
 
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
+    def __init__(self, C_in, C_out, kernel_size, stride, padding,
+                 affine=True):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
@@ -141,12 +143,14 @@ class FacConv(nn.Module):
     ReLU - Conv(Kx1) - Conv(1xK) - BN
     """
 
-    def __init__(self, C_in, C_out, kernel_length, stride, padding, affine=True):
+    def __init__(self, C_in, C_out, kernel_length, stride, padding,
+                 affine=True):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(
-                C_in, C_out, (1, kernel_length), stride, (0, padding), bias=False
+                C_in, C_out, (1, kernel_length), stride, (0, padding),
+                bias=False
             ),
             nn.Conv2d(C_in, C_in, (kernel_length, 1),
                       1, (padding, 0), bias=False),
@@ -166,8 +170,8 @@ class DilConv(nn.Module):
     """
 
     def __init__(
-        self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True
-    ):
+            self, C_in, C_out, kernel_size, stride, padding, dilation,
+            affine=True):
         super().__init__()
         self.net = nn.Sequential(
             nn.ReLU(),
@@ -194,11 +198,13 @@ class SepConv(nn.Module):
     DilConv(dilation=1) * 2
     """
 
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
+    def __init__(self, C_in, C_out, kernel_size, stride, padding,
+                 affine=True):
         super().__init__()
         self.net = nn.Sequential(
             DilConv(
-                C_in, C_in, kernel_size, stride, padding, dilation=1, affine=affine
+                C_in, C_in, kernel_size, stride, padding, dilation=1,
+                affine=affine
             ),
             DilConv(C_in, C_out, kernel_size, 1,
                     padding, dilation=1, affine=affine),
@@ -281,8 +287,10 @@ class MixedOp(nn.Module):
         Args:
             x: input
             weights: weight for each operation
-            alpha_prune_threshold: prune ops during forward pass if alpha below threshold
+            alpha_prune_threshold: prune ops during forward pass if alpha
+                below threshold
         """
         return sum(
-            w * op(x) for w, op in zip(weights, self._ops) if w > alpha_prune_threshold
+            w * op(x) for w, op in zip(weights,
+                                       self._ops) if w > alpha_prune_threshold
         )

@@ -58,7 +58,7 @@ def meta_architecture_search(
     # Warm-start/only tuning network parameters in first 10 epochs.
     # Finally, the number of normal cells in the network increases in these
     # three stages, to 5, 11, 17, respectively.
-    config.add_layers = 6
+    config.add_layers = 2
 
     # Set these to be able to re-init them,
     config.task_optimizer_cls = task_optimizer_cls
@@ -76,7 +76,7 @@ def meta_architecture_search(
 
     # Discovered cells are allowed to keep M=2, skip connections.
     # Use these for my experiment, M = 2
-    config.limit_skip_connections = 2
+    config.limit_skip_connections = None
 
     # Initialize the variables for Search Space Approximation,
     # Original P-DARTS, There are 4 intermediate nodes in a cell,
@@ -496,7 +496,7 @@ def train(
         # P-DARTS
         # addition of staging (G_k) for Search Space Approximation and
         # Regularization.
-        current_stage = int(meta_epoch //
+        current_stage = int((meta_epoch-1) //
                             (config.meta_epochs / config.architecture_stages))
 
         scale_factor = 0.2
@@ -506,7 +506,7 @@ def train(
                              np.exp(-
                                     (meta_epoch - config.warm_up_epochs *
                                      scale_factor)))
-        meta_model.drop_path_prob(dropout_rate)
+        meta_model.drop_out_skip_connections(dropout_rate)
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
@@ -544,8 +544,8 @@ def train(
                 config, config.task_optimizer_cls, meta_model
             )
 
-            # Set the dropout rate for operations,
-            meta_model.drop_path_prob(dropout_rate)
+            # Set the dropout rate for skip-connections,
+            meta_model.drop_out_skip_connections(dropout_rate)
 
             config.logger.info(
                 f"dropout ops = {config.dropout_operations[current_stage]}")
@@ -594,7 +594,8 @@ def train(
         if meta_epoch % config.print_freq == 0:
             config.logger.info(
                 f"Train: [{meta_epoch:2d}/{config.meta_epochs}] "
-                f"Time (sample, batch, sp_io, total): {sample_time.avg:.2f}, {batch_time.avg:.2f}, "
+                f"Time (sample, batch, sp_io, total): {sample_time.avg:.2f},"
+                f"{batch_time.avg:.2f}, "
                 f"{io_time.avg:.2f}, {total_time.avg:.2f} "
                 f"Train-TestLoss {config.losses_logger.avg:.3f} "
                 f"Train-TestPrec@(1,) ({config.top1_logger.avg:.1%}, {1.00:.1%})"
@@ -670,14 +671,14 @@ def train(
             task_optimizer.a_optim.load_state_dict(meta_optims_state[3])
 
             print(meta_model.genotype(switches_normal=config.switches_normal,
-                                      switches_reduce=config.switches_reduce))
+                                      switches_reduce=config.switches_reduce,
+                                      limit_skip_connections=config.limit_skip_connections))
             # save checkpoint
             experiment = {
                 "genotype": [task_info.genotype for task_info in task_infos],
                 "meta_genotype": meta_model.genotype(switches_normal=config.switches_normal,
                                                      switches_reduce=config.switches_reduce,
-                                                     num_of_sk=config.limit_skip_connections,
-                                                     nodes=config.nodes),
+                                                     limit_skip_connections=config.limit_skip_connections),
                 "alphas": [alpha for alpha in meta_model.alphas()],
             }
             experiment.update(train_info)
@@ -715,7 +716,9 @@ def train(
 
     # P-DARTS, final stage for meta-learning model, we limit the skip
     # connections
-    print(meta_model.genotype())
+    print(meta_model.genotype(switches_normal=config.switches_normal,
+                              switches_reduce=config.switches_reduce,
+                              limit_skip_connections=config.limit_skip_connections))
     experiment = {
         "meta_genotype": meta_model.genotype(
             switches_normal=config.switches_normal,
@@ -813,7 +816,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
             f"Test data evaluation{prefix}:: [{eval_epoch:2d}/{config.eval_epochs}] "
             f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
             f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
-            f" \n Sparse_num_params (mean, min, max): {np.mean(paramas_logger)}, {np.min(paramas_logger)}, {np.max(paramas_logger)}"
+            f" \n Sparse_num_params (mean, min, max): {np.mean(paramas_logger)}, "
+            f"{np.min(paramas_logger)}, {np.max(paramas_logger)}"
         )
 
     return config, alpha_logger, paramas_logger
@@ -859,7 +863,8 @@ if __name__ == "__main__":
 
     # only for hp search
     parser.add_argument(
-        "--hp_setting", type=str, default="in", help="use predefined HP configuration"
+        "--hp_setting", type=str, default="in",
+        help="use predefined HP configuration"
     )
     parser.add_argument("--use_hp_setting", type=int, default=0)
 
@@ -883,7 +888,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gpus",
         default="0",
-        help="gpu device ids separated by comma. " "`all` indicates use all gpus.",
+        help="gpu device ids separated by comma. " "`all` indicates use all"
+        " gpus.",
     )
 
     # Meta Learning
@@ -900,10 +906,12 @@ if __name__ == "__main__":
         "--start_epoch",
         type=int,
         default=1,
-        help="Start training at a specific epoch (for resuming training from a checkpoint)",
+        help="Start training at a specific epoch (for resuming training from"
+        " a checkpoint)",
     )
     parser.add_argument(
-        "--meta_batch_size", type=int, default=5, help="Number of tasks in a meta batch"
+        "--meta_batch_size", type=int, default=5,
+        help="Number of tasks in a meta batch"
     )
     parser.add_argument(
         "--test_meta_batch_size",
@@ -921,7 +929,8 @@ if __name__ == "__main__":
         "--eval_freq",
         type=int,
         default=1000,
-        help="how often to run meta-testing for intermediate evaluation (in epochs)",
+        help="how often to run meta-testing for intermediate evaluation "
+        "(in epochs)",
     )
 
     parser.add_argument(
@@ -948,7 +957,8 @@ if __name__ == "__main__":
         "--test_adapt_steps",
         type=float,
         default=1.0,
-        help="for how many test-train steps should architectue be adapted (relative to test_train_steps)?",
+        help="for how many test-train steps should architectue be adapted "
+        "(relative to test_train_steps)?",
     )
 
     parser.add_argument(
@@ -958,10 +968,12 @@ if __name__ == "__main__":
         "--w_meta_lr", type=float, default=0.001, help="meta lr for weights"
     )
     parser.add_argument(
-        "--w_meta_anneal", type=int, default=1, help="Anneal Meta weights optimizer LR"
+        "--w_meta_anneal", type=int, default=1,
+        help="Anneal Meta weights optimizer LR"
     )
     parser.add_argument(
-        "--w_task_anneal", type=int, default=0, help="Anneal task weights optimizer LR"
+        "--w_task_anneal", type=int, default=0,
+        help="Anneal task weights optimizer LR"
     )
     parser.add_argument("--a_meta_optim", default=None,
                         help="Meta optimizer of alphas")
@@ -994,7 +1006,8 @@ if __name__ == "__main__":
         help="Temperature anneal mode (if applicable to normalizer)",
     )
     parser.add_argument(
-        "--normalizer_t_max", type=float, default=5.0, help="Initial temperature"
+        "--normalizer_t_max", type=float, default=5.0,
+        help="Initial temperature"
     )
     parser.add_argument(
         "--normalizer_t_min",
@@ -1032,14 +1045,17 @@ if __name__ == "__main__":
         "--w_momentum", type=float, default=0.0, help="momentum for weights"
     )
     parser.add_argument(
-        "--w_weight_decay", type=float, default=0.0, help="weight decay for weights"
+        "--w_weight_decay", type=float, default=0.0,
+        help="weight decay for weights"
     )
     parser.add_argument(
-        "--w_grad_clip", type=float, default=10e5, help="gradient clipping for weights"
+        "--w_grad_clip", type=float, default=10e5,
+        help="gradient clipping for weights"
     )
 
     parser.add_argument(
-        "--drop_path_prob", type=float, default=0.0, help="drop path probability"
+        "--drop_path_prob", type=float, default=0.0,
+        help="drop path probability"
     )
     parser.add_argument(
         "--use_drop_path_in_meta_testing",
@@ -1076,18 +1092,20 @@ if __name__ == "__main__":
         "--alpha_prune_threshold",
         type=float,
         default=0.0,
-        help="During forward pass, alphas below the threshold probability are pruned (meaning "
-        "the respective operations are not executed anymore).",
+        help="During forward pass, alphas below the threshold probability are "
+        "pruned (meaning the respective operations are not executed anymore).",
     )
     parser.add_argument(
         "--meta_model_prune_threshold",
         type=float,
         default=0.0,
-        help="During meta training, prune alphas from meta model below this threshold to not train them any         longer.",
+        help="During meta training, prune alphas from meta model "
+        "below this threshold to not train them any longer.",
     )
 
     parser.add_argument(
-        "--alpha_weight_decay", type=float, default=0.001, help="weight decay for alpha"
+        "--alpha_weight_decay", type=float, default=0.001,
+        help="weight decay for alpha"
     )
     parser.add_argument(
         "--anneal_softmax_temperature",

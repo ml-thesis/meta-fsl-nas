@@ -236,7 +236,7 @@ class SearchCNNController(nn.Module):
 
     def reduce_operations(self, config, current_stage):
         """P-DARTS, Obtain alpha weights to reduce the operations by the specified
-            amount for the current stage.
+        amount for the current stage.
         """
         switches_normal = copy.deepcopy(config.switches_normal)
         switches_reduce = copy.deepcopy(config.switches_reduce)
@@ -499,12 +499,17 @@ class SearchCNNController(nn.Module):
 
     def drop_path_prob(self, p):
         """ Set drop path probability """
-        # P-DARTS, set the Dropout variable for nn.Dropout after
-        # the skip-connection instead of DropPath
 
         for module in self.net.modules():
-            if isinstance(module, ops.DropPath_) or \
-                    isinstance(module, nn.Dropout):
+            if isinstance(module, ops.DropPath_):
+                module.p = p
+
+    def drop_out_skip_connections(self, p):
+        """P-DARTS, set the Dropout variable for nn.Dropout after
+        the skip-connection instead of DropPath
+        """
+        for module in self.net.modules():
+            if isinstance(module, nn.Dropout):
                 module.p = p
 
     def forward(self, x, sparsify_input_alphas=None):
@@ -652,6 +657,8 @@ class SearchCNNController(nn.Module):
                 # alphas.
                 gene_normal = gt.limit_skip_connections(
                     self.alpha_normal, switches_normal, k=2,
+                    num_of_sk=limit_skip_connections,
+                    nodes=self.n_nodes,
                     primitives=self.primitives)
 
         else:

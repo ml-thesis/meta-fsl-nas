@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/metanas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_train
 		
 mkdir -p $TRAIN_DIR
 
@@ -28,19 +28,19 @@ args=(
     # test examples per class
     --q 1 \
 
-    --meta_model_prune_threshold 0.01 \
-    --alpha_prune_threshold 0.01 \
+    --meta_model_prune_threshold 0.001 \ # Lower due to few epochs?
+    --alpha_prune_threshold 0.001 \
     # Meta Learning
     # Original settings 30_000 meta epochs
     # warm_up_epochs 15_000
     --meta_model searchcnn \
-    --meta_epochs 30 \
-    --warm_up_epochs 15 \
+    --meta_epochs 18 \
+    --warm_up_epochs 3 \
     --use_pairwise_input_alphas \
     # --eval_freq 2500 \
-    --eval_freq 2 \
+    --eval_freq 5 \
     # --eval_epochs 200 \
-    --eval_epochs 2 \
+    --eval_epochs 3 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \
@@ -51,6 +51,7 @@ args=(
     # Architectures
     --init_channels 28 \
     --layers 4 \
+    --nodes 3 \
     --reduction_layers 1 3 \
     --use_first_order_darts \
 
