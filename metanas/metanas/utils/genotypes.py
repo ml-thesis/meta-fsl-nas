@@ -315,10 +315,6 @@ def parse_switches(alpha, switches, k, primitives=PRIMITIVES_FEWSHOT):
         node_gene = []
         for edge_idx in topk_edge_indices:
             prim_idx = primitive_indices[edge_idx]
-            # print(edges)
-            # print(primitives_enabled)
-            # print(edge_idx, prim_idx[0])
-            # print(primitives_enabled[edge_idx][prim_idx[0]])
             prim = primitives_enabled[edge_idx][prim_idx[0]]
             node_gene.append((prim, edge_idx.item()))
 
@@ -387,9 +383,53 @@ def limit_skip_connections(alphas, switches, num_of_sk=2, nodes=3,
             return gene
 
 
-def parse_pairwise_switches(alpha, switches, k, primitives=PRIMITIVES_FEWSHOT):
-    # TODO: If we want to include pairwise alphas for final models
-    return NotImplementedError
+def parse_pairwise_switches(alpha, alpha_pairwise, switches, primitives=PRIMITIVES):
+    # get sparse alpha pw
+    # TODO: Add this step back in
+    alpha_pairwise = search_cnn.sparsify_pairwise_alphas(alpha_pairwise)
+    gene = []
+    j = 0
+
+    # iterate through nodes
+    for edge_i, (edges, pw_edges) in enumerate(zip(alpha, alpha_pairwise)):
+        # edge_i: int
+        # edges: Tensor(n_edges, n_ops)
+        # pw_edges: Tensor(n_input_nodes)
+
+        # find strongest edge for each input
+        # These primitive indices don't correspond to the actual
+        # primitive indices due to the switches. k=1 here.
+        edge_max, primitive_indices = torch.topk(edges[:, :], 1)
+        node_gene = []
+
+        top_inputs = []
+        pw_idx = 0  # find the best two inputs from pairwise alphas
+
+        # iterate through possible inputs and check which to use
+        # (correct one = only combination without zero alpha)
+        for input_1 in range(len(edges)):
+            for input_2 in range(input_1 + 1, len(edges)):
+                if pw_edges[pw_idx] > 0:
+                    top_inputs = torch.tensor([input_1, input_2])
+                pw_idx = pw_idx + 1
+
+        # Primitive indices which are enabled, to correspond
+        # with primitive_indices
+        primitives_enabled = []
+        for _ in range(len(edges)):
+            prim_enabled_indices = np.where(switches[j])[0]
+            # The primitive operations which are enabled
+            primitives_enabled.append([
+                primitives[i] for i in prim_enabled_indices])
+            j += 1
+
+        for edge_idx in top_inputs:
+            prim_idx = primitive_indices[edge_idx]
+            prim = primitives_enabled[edge_idx][prim_idx[0]]
+            node_gene.append((prim, edge_idx.item()))
+
+        gene.append(node_gene)
+    return gene
 
 
 def convert_tensor_alphas(alpha_concat, nodes=3):

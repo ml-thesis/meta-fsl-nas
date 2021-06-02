@@ -27,7 +27,7 @@ GNU Affero General Public License for more details.
 """
 
 
-""" 
+"""
 Based on https://github.com/khanrc/pt.darts
 which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
@@ -623,10 +623,10 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, switches_normal=None, switches_reduce=None,
+    def genotype(self, switches_normal, switches_reduce,
                  limit_skip_connections=None):
         if self.use_pairwise_input_alphas:
-            # TODO: Implement for staging for pairwise alphas
+            # Original implementation uses, gt.parse_pairwise
             weights_pw_normal = [
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
             ]
@@ -635,16 +635,18 @@ class SearchCNNController(nn.Module):
             ]
 
             gene_normal = gt.parse_pairwise(
-                self.alpha_normal, weights_pw_normal,
+                self.alpha_normal, weights_pw_normal, switches_normal,
                 primitives=self.primitives
             )
             gene_reduce = gt.parse_pairwise(
-                self.alpha_reduce, weights_pw_reduce,
+                self.alpha_reduce, weights_pw_reduce, switches_reduce,
                 primitives=self.primitives
             )
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
-        elif switches_normal is not None and switches_reduce is not None:
+        else:
+            # Original implementation without switches for operations,
+            # and without pairwise (beta) alphas using gt.parse.
             gene_normal = gt.parse_switches(
                 self.alpha_normal, switches_normal, k=2,
                 primitives=self.primitives)
@@ -652,22 +654,13 @@ class SearchCNNController(nn.Module):
                 self.alpha_reduce, switches_normal, k=2,
                 primitives=self.primitives)
 
+            # Limiting the skip connections, only applies to the normal cell.
             if limit_skip_connections is not None:
-                # Limiting the skip connections, only applies to the normal
-                # alphas.
                 gene_normal = gt.limit_skip_connections(
                     self.alpha_normal, switches_normal, k=2,
                     num_of_sk=limit_skip_connections,
                     nodes=self.n_nodes,
                     primitives=self.primitives)
-
-        else:
-            # Original implementation without switches for operations,
-            # gene_normal = gt.parse(
-            #     self.alpha_normal, k=2, primitives=self.primitives)
-            # gene_reduce = gt.parse(
-            #     self.alpha_reduce, k=2, primitives=self.primitives)
-            raise NotImplementedError
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 

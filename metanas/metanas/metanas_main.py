@@ -188,8 +188,8 @@ def meta_architecture_search(
 
     # save results
     experiment = {
-        "meta_genotype": meta_model.genotype(switches_normal=config.switches_normal,
-                                             switches_reduce=config.switches_reduce),
+        "meta_genotype": meta_model.genotype(config.switches_normal,
+                                             config.switches_reduce),
         "alphas": [alpha for alpha in meta_model.alphas()],
         "final_eval_test_accu": config.top1_logger_test.avg,
         "final_eval_test_loss": config.losses_logger_test.avg,
@@ -670,15 +670,13 @@ def train(
             task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
             task_optimizer.a_optim.load_state_dict(meta_optims_state[3])
 
-            print(meta_model.genotype(switches_normal=config.switches_normal,
-                                      switches_reduce=config.switches_reduce,
-                                      limit_skip_connections=config.limit_skip_connections))
+            print(meta_model.genotype(config.switches_normal,
+                                      config.switches_reduce))
             # save checkpoint
             experiment = {
                 "genotype": [task_info.genotype for task_info in task_infos],
-                "meta_genotype": meta_model.genotype(switches_normal=config.switches_normal,
-                                                     switches_reduce=config.switches_reduce,
-                                                     limit_skip_connections=config.limit_skip_connections),
+                "meta_genotype": meta_model.genotype(config.switches_normal,
+                                                     config.switches_reduce),
                 "alphas": [alpha for alpha in meta_model.alphas()],
             }
             experiment.update(train_info)
@@ -715,15 +713,15 @@ def train(
     )
 
     # P-DARTS, final stage for meta-learning model, we limit the skip
-    # connections
-    print(meta_model.genotype(switches_normal=config.switches_normal,
-                              switches_reduce=config.switches_reduce,
-                              limit_skip_connections=config.limit_skip_connections))
+    # connections, as this is our final meta-model.
+    print(meta_model.genotype(config.switches_normal,
+                              config.switches_reduce,
+                              config.limit_skip_connections))
     experiment = {
         "meta_genotype": meta_model.genotype(
-            switches_normal=config.switches_normal,
-            switches_reduce=config.switches_reduce,
-            limit_skip_connections=config.limit_skip_connections),
+            config.switches_normal,
+            config.switches_reduce,
+            config.limit_skip_connections),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
     experiment.update(train_info)
