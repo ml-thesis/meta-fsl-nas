@@ -506,7 +506,8 @@ def train(
                              np.exp(-
                                     (meta_epoch - config.warm_up_epochs *
                                      scale_factor)))
-        meta_model.drop_out_skip_connections(dropout_rate)
+        # This is now done in the DARTS.step()
+        # meta_model.drop_out_skip_connections(dropout_rate)
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
@@ -545,7 +546,8 @@ def train(
             )
 
             # Set the dropout rate for skip-connections,
-            meta_model.drop_out_skip_connections(dropout_rate)
+            dropout_rate = dropout_current_stage
+            # meta_model.drop_out_skip_connections(dropout_rate)
 
             config.logger.info(
                 f"dropout ops = {config.dropout_operations[current_stage]}")
@@ -564,7 +566,8 @@ def train(
                 task_optimizer.step(
                     task, epoch=meta_epoch, global_progress=global_progress,
                     switches_normal=config.switches_normal,
-                    switches_reduce=config.switches_reduce
+                    switches_reduce=config.switches_reduce,
+                    dropout_sk=dropout_rate
                 )
             ]
             meta_model.load_state_dict(meta_state)

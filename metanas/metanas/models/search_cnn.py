@@ -235,13 +235,13 @@ class SearchCNNController(nn.Module):
         )
 
     def reduce_operations(self, config, current_stage):
-        """P-DARTS, Obtain alpha weights to reduce the operations by the specified
-        amount for the current stage.
+        """P-DARTS, Obtain alpha weights to reduce the operations by the
+        specified amount for the current stage.
         """
         switches_normal = copy.deepcopy(config.switches_normal)
         switches_reduce = copy.deepcopy(config.switches_reduce)
 
-        # TODO: Add again if we consider the None operations
+        # Add again if we consider the None operations
         # last_stage = current_stage == config.architecture_stages
 
         # Number of operations to drop, -1 for the index
@@ -271,7 +271,7 @@ class SearchCNNController(nn.Module):
         for i in range(edges):
             idxs = np.where(switches[i])[0].tolist()
 
-            # TODO: If None in primitives, add check for this operation
+            # If None in primitives, add check for this operation
             # if last_stage:
             #     # for the last stage, drop all Zero operations
             #     drop = self._get_min_k_no_zero(
@@ -508,6 +508,8 @@ class SearchCNNController(nn.Module):
         """P-DARTS, set the Dropout variable for nn.Dropout after
         the skip-connection instead of DropPath
         """
+        self.dropout_skip_connections = p
+
         for module in self.net.modules():
             if isinstance(module, nn.Dropout):
                 module.p = p
@@ -625,6 +627,8 @@ class SearchCNNController(nn.Module):
 
     def genotype(self, switches_normal, switches_reduce,
                  limit_skip_connections=None):
+        """Generate genotype based on current weights and switches
+        """
         if self.use_pairwise_input_alphas:
             # Original implementation uses, gt.parse_pairwise
             weights_pw_normal = [
@@ -634,14 +638,23 @@ class SearchCNNController(nn.Module):
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
             ]
 
-            gene_normal = gt.parse_pairwise(
+            gene_normal = gt.parse_pairwise_switches(
                 self.alpha_normal, weights_pw_normal, switches_normal,
                 primitives=self.primitives
             )
-            gene_reduce = gt.parse_pairwise(
+            gene_reduce = gt.parse_pairwise_switches(
                 self.alpha_reduce, weights_pw_reduce, switches_reduce,
                 primitives=self.primitives
             )
+
+            # Limiting the skip connections, only applies to the normal cell.
+            if limit_skip_connections is not None:
+                gene_normal = gt.limit_skip_connections(
+                    self.alpha_normal, weights_pw_normal, switches_normal,
+                    num_of_sk=limit_skip_connections,
+                    nodes=self.n_nodes,
+                    primitives=self.primitives)
+
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
         else:
@@ -689,8 +702,9 @@ class SearchCNNController(nn.Module):
             yield n, p
 
     def arch_parameters(self):
-        """P-DARTS method to obtain architecture parameters
-            TODO: Might need to first soft prune the weights
+        """P-DARTS method to obtain architecture parameters,
+        these variables are used in reduce_operations and are
+        not normalized
         """
         self._arch_parameters = [
             self.alpha_normal,
