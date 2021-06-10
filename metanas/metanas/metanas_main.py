@@ -816,7 +816,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
         config.logger.info(
             f"Test data evaluation{prefix}:: [{eval_epoch:2d}/{config.eval_epochs}] "
             f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
-            f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
+            f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, "
+            f"{1.00:.1%})"
             f" \n Sparse_num_params (mean, min, max): {np.mean(paramas_logger)}, "
             f"{np.min(paramas_logger)}, {np.max(paramas_logger)}"
         )
