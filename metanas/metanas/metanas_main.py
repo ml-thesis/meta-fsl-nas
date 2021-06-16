@@ -52,7 +52,9 @@ def meta_architecture_search(
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    config.drop_number_operations = [2, 3, 2]
+    # TODO: Set to 0 to comply with UNAS changes.
+    # config.drop_number_operations = [2, 3, 2]
+    config.drop_number_operations = [0, 0, 0]
 
     # Each stage, the super-network is trained for 25 epochs (batch size 96).
     # Warm-start/only tuning network parameters in first 10 epochs.
@@ -246,23 +248,6 @@ def _build_model(config, task_distribution, normalizer,
         else:
             assert (switches_normal is None or switches_reduce is None
                     ), "Only works for Progressive DARTS search currently"
-
-        # Old configuration
-        # meta_model = SearchCNNController(
-        #     task_distribution.n_input_channels,
-        #     config.init_channels,
-        #     task_distribution.n_classes,
-        #     config.layers,
-        #     n_nodes=config.nodes,
-        #     reduction_layers=config.reduction_layers,
-        #     device_ids=config.gpus,
-        #     normalizer=normalizer,
-        #     PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
-        #     feature_scale_rate=1,
-        #     use_hierarchical_alphas=config.use_hierarchical_alphas,
-        #     use_pairwise_input_alphas=config.use_pairwise_input_alphas,
-        #     alpha_prune_threshold=config.alpha_prune_threshold,
-        # )
 
     elif config.meta_model == "maml":
 
@@ -612,6 +597,7 @@ def train(
             meta_state = copy.deepcopy(meta_model.state_dict())
 
             # copy also the optimizer states
+            # TODO: Omit a_optim
             meta_optims_state = [
                 copy.deepcopy(meta_optimizer.w_meta_optim.state_dict()),
                 copy.deepcopy(meta_optimizer.a_meta_optim.state_dict()),
@@ -668,6 +654,7 @@ def train(
             )
 
             # reset the states so that meta training doesnt see meta testing
+            # TODO: Omit a_optim
             meta_optimizer.w_meta_optim.load_state_dict(meta_optims_state[0])
             meta_optimizer.a_meta_optim.load_state_dict(meta_optims_state[1])
             task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
@@ -754,6 +741,7 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     meta_state = copy.deepcopy(meta_model.state_dict())
 
     # copy also the task optimizer states
+    # TODO: Omit a_optim
     meta_optims_state = [
         copy.deepcopy(task_optimizer.w_optim.state_dict()),
         copy.deepcopy(task_optimizer.a_optim.state_dict()),
@@ -803,6 +791,7 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
             # load meta state
             meta_model.load_state_dict(meta_state)
 
+            # TODO: Omit a_optim
             task_optimizer.w_optim.load_state_dict(meta_optims_state[0])
             task_optimizer.a_optim.load_state_dict(meta_optims_state[1])
 

@@ -124,12 +124,12 @@ class SearchCNNController(nn.Module):
             PRIMITIVES = gt.PRIMITIVES
 
         # Previously, adjust for progressive DARTS,
-        # old, n_ops = len(PRIMITIVES)
         self.primitives = PRIMITIVES
 
         # checks how many ops to enable
         n_ops = sum(list(map(int, switches_normal[0])))
-        print("Number of n_ops enabled, ", n_ops)
+        self.n_ops = n_ops
+        print("P-DARTS: Config number of n_ops enabled, ", n_ops)
 
         self.alpha_normal = nn.ParameterList()
         self.alpha_reduce = nn.ParameterList()
@@ -234,9 +234,71 @@ class SearchCNNController(nn.Module):
             weights_pw_reduce,
         )
 
+    def get_alphas(self):
+        """Return the discrete/normalized alphas and the
+        raw alphas for UNAS"""
+        weights_normal = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_normal]
+        weights_reduce = [self.apply_normalizer(
+            alpha) for alpha in self.alpha_reduce]
+
+        return (
+            copy.deepcopy(self.alpha_normal),
+            copy.deepcopy(self.alpha_reduce),
+            weights_normal,
+            weights_reduce
+        )
+
+    def sample_alphas(self, temperature=0.4, softeps_weights=0.02):
+        """UNAS changes"""
+        def sample_weight_edge(edge):
+
+            for curr_op in range(self.n_ops):
+                edge = edge.unsqueeze(1)
+
+                if softeps_weights > 0:
+                    q = F.softmax(edge, dim=-1)
+                    edge = torch.log(q + softeps_weights)
+
+                w = gumbel_softmax_sample(edge, temperature)
+                # TODO: original code transposes view, .view(b, -1, 1)
+                return w
+
+        sample_normal, sample_reduce = [],  []
+        for alpha in self.alpha_reduce:
+            weights = []
+            for i, edge in enumerate(alpha):
+                edge = edge.data.clone().cuda()
+                weight = sample_weight_edge(edge)
+                weights.append(weight)
+
+            # TODO: To obtain discrete weights?
+            # use normalizer in the model
+            # F.softmax(1000 * w.clone().detach(), dim=-1)
+
+            sample_reduce.append(torch.cat(weights, dim=1).T)
+
+        for alpha in self.alpha_reduce:
+            weights = []
+            for i, edge in enumerate(alpha):
+                edge = edge.data.clone().cuda()
+                weight = sample_weight_edge(edge)
+                weights.append(weight)
+
+            # TODO: To obtain discrete weights?
+            # use normalizer in the model
+            # F.softmax(1000 * w.clone().detach(), dim=-1)
+
+            sample_normal.append(torch.cat(weights, dim=1).T)
+
+        # Disable op reduction to test this in metaNAS?
+        return sample_reduce, sample_normal
+
     def reduce_operations(self, config, current_stage):
         """P-DARTS, Obtain alpha weights to reduce the operations by the
         specified amount for the current stage.
+
+        TODO: Can we consider the pairwise alphas here as well?
         """
         switches_normal = copy.deepcopy(config.switches_normal)
         switches_reduce = copy.deepcopy(config.switches_reduce)
@@ -701,17 +763,6 @@ class SearchCNNController(nn.Module):
         for n, p in self._alphas:
             yield n, p
 
-    def arch_parameters(self):
-        """P-DARTS method to obtain architecture parameters,
-        these variables are used in reduce_operations and are
-        not normalized
-        """
-        self._arch_parameters = [
-            self.alpha_normal,
-            self.alpha_reduce,
-        ]
-        return self._arch_parameters
-
 
 def broadcast_list(l, device_ids):
     """ Broadcasting list """
@@ -1116,3 +1167,16 @@ class SearchCell(nn.Module):
             states[2:], dim=1
         )  # concatenate all intermediate nodes except inputs
         return s_out
+
+
+def sample_gumbel(shape, eps=1e-20):
+    """ generate sample from Gumbel distribution. """
+    U = torch.Tensor(shape).uniform_(0, 1).cuda()
+    sample = -(torch.log(-torch.log(U + eps) + eps))
+    return sample
+
+
+def gumbel_softmax_sample(logits, temperature):
+    """ generate samples from Gumbel Softmax distribution. """
+    y = logits + sample_gumbel(logits.size())
+    return F.softmax(y / temperature, dim=-1)
