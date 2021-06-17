@@ -194,8 +194,8 @@ def train(task,
         N = train_X.size(0)
 
         # TODO: Originally done in train step in UNAS
-        # c_... variables are copies with no grad
-        s_reduce, s_normal, c_reduce, c_normal = architect.sample_alphas()
+        # c_... variables are copies with no grad and clone of w_reduce
+        w_reduce, w_normal, c_reduce, c_normal = architect.sample_alphas()
 
         # weights_no_grad = alpha.module.clone_weights(weights)
         # Update architecture alphas
@@ -207,6 +207,7 @@ def train(task,
         # model properly after the step
         architect.step(train_X, train_y, val_X, val_y,
                        alpha_optim, w_optim,
+                       w_reduce, w_normal,
                        global_progress)
 
         # if not warm_up:  # only update alphas outside warm up phase
@@ -222,8 +223,8 @@ def train(task,
         # phase 1. child network step (w)
         w_optim.zero_grad()
 
-        # TODO: Pass alphas
-        logits = model(train_X)
+        # TODO: Pass alphas, however still ignoring the pairwise alphas
+        logits = model(train_X, c_reduce, c_normal)
         loss = model.criterion(logits, train_y)
 
         # TODO: What is this?
@@ -235,7 +236,7 @@ def train(task,
         w_optim.step()
 
 
-class REINFORCE:
+class REINFORCE(nn.Module):
     # This is the architect in the standard DARTS implementation
     # TODO: Could also attempt, REBAR and PPO?
 
@@ -245,6 +246,8 @@ class REINFORCE:
             net
             w_momentum: weights momentum
         """
+        super(REINFORCE, self).__init__()
+
         self.model = model
         self.v_model = copy.deepcopy(model)
         self.w_momentum = w_momentum
@@ -260,23 +263,11 @@ class REINFORCE:
         self.exp_avg1 = utils.ExpMovingAvgrageMeter()
         self.exp_avg2 = utils.ExpMovingAvgrageMeter()
 
-        # weights generalization error
-        # TODO: Define arch_optimizer/alpha optimzier
-
-        # TODO: Used where?
-        # normal_size, reduce_size = self.alpha.module.alphas_size()
-        # alpha_size = normal_size + reduce_size
-
-        # TODO: only used for latency part of the objective
-        # self.surrogate = SurrogateLinear(alpha_size, self.logging).cuda()
-
-        # self.num_repeat = 10
-        # self.num_arch_samples = 1000
-
         self.gen_error_alpha = 0.2  # args.gen_error_alpha
         self.gen_error_alpha_lambda = 0.2  # args.gen_error_alpha_lambda
 
-    def step(train_X, train_y, val_X, val_y, alpha_optim, w_optim,
+    def step(self, train_X, train_y, val_X, val_y, alpha_optim, w_optim,
+             w_normal, w_reduce,
              global_progress):
         #     # train(task, model, reinforce, w_opt, a_opt, lr,
         #             global_progress, config, warm_up)
@@ -285,7 +276,11 @@ class REINFORCE:
         # to check, either .alphas() or _get_normalized_alphas()
         # TODO: find way of applying to pw alphas?
         # TODO: Move this step 1 function up
-        w_normal, w_reduce, d_normal, d_reduce = self.model.get_alphas()
+        # w_normal, w_reduce, d_normal, d_reduce = self.model.get_alphas()
+
+        # Discretize alphas
+        d_normal = self.model.discretize_alphas(w_normal)
+        d_reduce = self.model.discretize_alphas(w_reduce)
 
         alpha_optim.zero_grad()
 
@@ -295,11 +290,13 @@ class REINFORCE:
             #     # disc_weights = self.alpha.module.discretize(weights)
             loss_disc, acc, loss_train, loss_diff = self.training_objective(
                 train_X, train_y,
+                d_normal, d_reduce,
                 val_X, val_y
             )
 
         # TODO: Possibly reduce_loss_disc, to one disk
         avg = torch.mean(loss_disc).detach()
+        print("avg:", avg)
 
         # TODO: Write out formula
         # Baseline c_n?
@@ -311,12 +308,18 @@ class REINFORCE:
         # works for our implementation as well
         log_q_d = self.log_probability(w_normal, w_reduce, d_normal, d_reduce)
         loss = torch.mean(log_q_d * reward) + baseline
+        print(log_q_d)
+        print(reward)
+        print(baseline)
+        print(loss)
+
         loss_train, loss_diff = torch.mean(loss_train), torch.mean(loss_diff)
 
         # TODO: Log entropy possibly
         # entropy_loss = self.entropy_loss(w_normal, w_reduce)
 
         # Backward pass and update.
+        # TODO: Create alpha module to be able to do backwards on the loss
         loss.backward()
         alpha_optim.step()
 
@@ -376,13 +379,15 @@ class REINFORCE:
             sample_reduce), copy.deepcopy(sample_normal)
         return sample_reduce, sample_normal, c_reduce, c_normal
 
-    def training_objective(self, X_train, y_train, X_val, y_val):
+    def training_objective(self, X_train, y_train, w_normal, w_reduce,
+                           X_val, y_val):
         # TODO: Pass more variables
         # def training_obj(self, train, train_target, weights,
         #                  model_opt, val, val_target, global_step):
 
-        logits_train = self.model(X_train)
+        logits_train = self.model(X_train, w_normal, w_reduce)
         loss_train = self.model.loss(X_train, y_train)
+        print("loss:", loss_train)
 
         # TODO: This is actually test?
         # logits_val = self.model(X_val)

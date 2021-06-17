@@ -12,6 +12,7 @@ from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
 from metanas.task_optimizer.darts import Darts
+from metanas.task_optimizer.unas import UNAS
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
@@ -39,7 +40,7 @@ cf. 3rd-party-licenses.txt in root directory.
 
 
 def meta_architecture_search(
-    config, task_optimizer_cls=Darts, meta_optimizer_cls=NAS_Reptile
+    config, task_optimizer_cls=UNAS, meta_optimizer_cls=NAS_Reptile
 ):
     config.logger.info("Start meta architecture search")
 

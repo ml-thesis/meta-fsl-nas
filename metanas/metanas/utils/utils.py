@@ -212,6 +212,33 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
 
+class ExpMovingAvgrageMeter:
+    def __init__(self, momentum=0.9):
+        self.momentum = momentum
+        self.reset()
+
+    def reset(self):
+        self.avg = 0
+
+    def update(self, val):
+        self.avg = (1. - self.momentum) * self.avg + self.momentum * val
+
+
+def accuracy(output, target, topk=(1,)):
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0)
+        res.append(correct_k.mul_(100.0/batch_size))
+    return res
+
+
 class EMAMeter:
     """Computes and stores an exponential moving average
 

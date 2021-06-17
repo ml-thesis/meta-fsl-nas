@@ -234,20 +234,21 @@ class SearchCNNController(nn.Module):
             weights_pw_reduce,
         )
 
-    def get_alphas(self):
+    # TODO: Former get_alphas
+    def discretize_alphas(self, alphas):
         """Return the discrete/normalized alphas and the
         raw alphas for UNAS"""
-        weights_normal = [self.apply_normalizer(
-            alpha) for alpha in self.alpha_normal]
-        weights_reduce = [self.apply_normalizer(
-            alpha) for alpha in self.alpha_reduce]
-
-        return (
-            copy.deepcopy(self.alpha_normal),
-            copy.deepcopy(self.alpha_reduce),
-            weights_normal,
-            weights_reduce
-        )
+        alphas = [self.apply_normalizer(
+            alpha) for alpha in alphas]
+        # weights_reduce = [self.apply_normalizer(
+        #     alpha) for alpha in self.alpha_reduce]
+        return alphas
+        # return (
+        # copy.deepcopy(self.alpha_normal),
+        # copy.deepcopy(self.alpha_reduce),
+        # weights_normal,
+        # weights_reduce
+        # )
 
     def sample_alphas(self, temperature=0.4, softeps_weights=0.02):
         """UNAS changes"""
@@ -576,7 +577,8 @@ class SearchCNNController(nn.Module):
             if isinstance(module, nn.Dropout):
                 module.p = p
 
-    def forward(self, x, sparsify_input_alphas=None):
+    def forward(self, x, w_n=None, w_r=None, sparsify_input_alphas=None):
+        # TODO: Temp variables w_n, w_r
         """Forward pass through the network
 
         Args:
@@ -604,6 +606,9 @@ class SearchCNNController(nn.Module):
             weights_pw_normal,
             weights_pw_reduce,
         ) = self._get_normalized_alphas()
+        if w_n is not None and w_r is not None:
+            weights_normal = w_n
+            weights_reduce = w_r
 
         if len(self.device_ids) == 1:
             return self.net(
