@@ -12,7 +12,7 @@ from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
 from metanas.task_optimizer.darts import Darts
-from metanas.task_optimizer.unas import UNAS
+from metanas.task_optimizer.snas import UNAS
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
@@ -533,7 +533,6 @@ def train(
 
             # Set the dropout rate for skip-connections,
             dropout_rate = dropout_current_stage
-            # meta_model.drop_out_skip_connections(dropout_rate)
 
             config.logger.info(
                 f"dropout ops = {config.dropout_operations[current_stage]}")

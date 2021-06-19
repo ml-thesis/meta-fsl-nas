@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from torch.nn.parallel._functions import Broadcast
 import scipy.special
 import copy
@@ -240,18 +241,11 @@ class SearchCNNController(nn.Module):
         raw alphas for UNAS"""
         alphas = [self.apply_normalizer(
             alpha) for alpha in alphas]
-        # weights_reduce = [self.apply_normalizer(
-        #     alpha) for alpha in self.alpha_reduce]
+        
         return alphas
-        # return (
-        # copy.deepcopy(self.alpha_normal),
-        # copy.deepcopy(self.alpha_reduce),
-        # weights_normal,
-        # weights_reduce
-        # )
 
     def sample_alphas(self, temperature=0.4, softeps_weights=0.02):
-        """UNAS changes"""
+        """TODO: Remove this sampling"""
         def sample_weight_edge(edge):
 
             for curr_op in range(self.n_ops):
@@ -577,8 +571,7 @@ class SearchCNNController(nn.Module):
             if isinstance(module, nn.Dropout):
                 module.p = p
 
-    def forward(self, x, w_n=None, w_r=None, sparsify_input_alphas=None):
-        # TODO: Temp variables w_n, w_r
+    def forward(self, x, sparsify_input_alphas=None):
         """Forward pass through the network
 
         Args:
@@ -606,9 +599,6 @@ class SearchCNNController(nn.Module):
             weights_pw_normal,
             weights_pw_reduce,
         ) = self._get_normalized_alphas()
-        if w_n is not None and w_r is not None:
-            weights_normal = w_n
-            weights_reduce = w_r
 
         if len(self.device_ids) == 1:
             return self.net(
@@ -1172,16 +1162,3 @@ class SearchCell(nn.Module):
             states[2:], dim=1
         )  # concatenate all intermediate nodes except inputs
         return s_out
-
-
-def sample_gumbel(shape, eps=1e-20):
-    """ generate sample from Gumbel distribution. """
-    U = torch.Tensor(shape).uniform_(0, 1).cuda()
-    sample = -(torch.log(-torch.log(U + eps) + eps))
-    return sample
-
-
-def gumbel_softmax_sample(logits, temperature):
-    """ generate samples from Gumbel Softmax distribution. """
-    y = logits + sample_gumbel(logits.size())
-    return F.softmax(y / temperature, dim=-1)

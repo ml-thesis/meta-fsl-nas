@@ -2,17 +2,32 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import numpy as np
+
 from collections import OrderedDict, namedtuple
 
 from metanas.utils import utils
 from metanas.models.search_cnn import SearchCNNController
 
+import matplotlib.pyplot as plt
+
+from metanas.utils import genotypes as gt
+from metanas.task_optimizer import Alphas
 
 class UNAS:
     def __init__(self, model, config, do_scheduler_lr=False):
         self.config = config
         self.model = model
         self.do_schedule_lr = do_scheduler_lr
+
+        self.alphas = Alpha(num_normal=1,
+                  num_reduce=1,
+                  num_op=len(gt.PRIMITIVES_FEWSHOT), # TODO: Should be changing with P-DARTS settings
+                  num_nodes=config.n_nodes,
+                  gsm_soften_eps=0.0, # TODO: Add to config
+                  gsm_temperature=0.4, # TODO: Add to config
+                  same_alpha_minibatch=args.same_alpha_minibatch)
 
         self.task_train_steps = config.task_train_steps
         self.test_task_train_steps = config.test_task_train_steps
@@ -24,7 +39,7 @@ class UNAS:
             lr=self.config.w_lr,
             betas=(0.0, 0.999),
             weight_decay=self.config.w_weight_decay,
-        )  #
+        ) 
 
         # architecture optimizer, self.arch_topimizer
         self.a_optim = torch.optim.Adam(
@@ -34,24 +49,22 @@ class UNAS:
             weight_decay=self.config.alpha_weight_decay,
         )
 
-        # TODO: Architect from Darts will be Reinforce in this case
-        # instead of bi-level optimization.
+
         self.architect = REINFORCE(
             self.model,
             self.config.w_momentum,
-            self.config.w_weight_decay,
-            # self.config.use_first_order_darts, TODO?
+            self.config.w_weight_decay
         )
 
-        # TODO: Define surrogate?
+        # weights generalization error
+        self.gen_error_alpha = 0.1 #args.gen_error_alpha
+        self.gen_error_alpha_lambda = 0.1 #args.gen_error_alpha_lambda
+
         self.loss = None
         self.accuracy = None
         self.count = None
         self.loss_diff_sign = None
         self.reset_counter()
-
-        # TODO: Add?
-        # self.report_freq = args.report_freq
 
     def reset_counter(self):
         """Resets counters."""
@@ -96,7 +109,7 @@ class UNAS:
             arch_adap_steps = train_steps
 
         lr = self.config.w_lr
-        ####
+
         for train_step in range(train_steps):
 
             warm_up = (
@@ -177,14 +190,8 @@ def train(task,
           global_progress,
           config,
           warm_up=False):
-
-    # tells your model that you are training the model.
-    # So effectively layers like dropout, batchnorm etc. which
-    # behave different on the train and test procedures know what
-    # is going on and hence can behave accordingly.
+    # Train loop of train_search.py in UNAS.
     model.train()
-
-    # self.a_optim.zero_grad()
 
     for step, ((train_X, train_y), (val_X, val_y)) in enumerate(
         zip(task.train_loader, task.valid_loader)
@@ -195,39 +202,23 @@ def train(task,
 
         # TODO: Originally done in train step in UNAS
         # c_... variables are copies with no grad and clone of w_reduce
+        # TODO: Refactor to alphas module?
         w_reduce, w_normal, c_reduce, c_normal = architect.sample_alphas()
 
-        # weights_no_grad = alpha.module.clone_weights(weights)
-        # Update architecture alphas
-
-        #####
         # phase 2. architect step (alpha)
         # TODO: Do we pass the validation data here or no?
-        # TODO: Pass a copy of the alphas, and make sure we init the new
-        # model properly after the step
         architect.step(train_X, train_y, val_X, val_y,
                        alpha_optim, w_optim,
                        w_reduce, w_normal,
                        global_progress)
 
-        # if not warm_up:  # only update alphas outside warm up phase
-        # alpha_optim.zero_grad()
-        # if config.do_unrolled_architecture_steps:
-        #     architect.virtual_step(
-        #         train_X, train_y, lr, w_optim)  # (calc w`)
-        # architect.backward(train_X, train_y, val_X, val_y, lr, w_optim)
-
-        #####
-        # TODO: Take a backprop on the model weights based on the
-        # logits.
         # phase 1. child network step (w)
-        w_optim.zero_grad()
-
         # TODO: Pass alphas, however still ignoring the pairwise alphas
+        w_optim.zero_grad()
         logits = model(train_X, c_reduce, c_normal)
         loss = model.criterion(logits, train_y)
 
-        # TODO: What is this?
+        # TODO: We don't have the grad_fn so this is required?
         # dummy = sum([torch.sum(param) for param in model.parameters()])
         # loss += dummy * 0.
 
@@ -236,7 +227,7 @@ def train(task,
         w_optim.step()
 
 
-class REINFORCE(nn.Module):
+class REINFORCE:
     # This is the architect in the standard DARTS implementation
     # TODO: Could also attempt, REBAR and PPO?
 
@@ -246,22 +237,22 @@ class REINFORCE(nn.Module):
             net
             w_momentum: weights momentum
         """
-        super(REINFORCE, self).__init__()
 
         self.model = model
         self.v_model = copy.deepcopy(model)
         self.w_momentum = w_momentum
         self.w_weight_decay = w_weight_decay
 
-        # UNAS introduces
+        self.
+
         # Reset counters
         self.count = 0
         self.loss = utils.AverageMeter()
         self.loss_diff_sign = utils.AverageMeter()
         self.accuracy = utils.AverageMeter()
 
-        self.exp_avg1 = utils.ExpMovingAvgrageMeter()
-        self.exp_avg2 = utils.ExpMovingAvgrageMeter()
+        self.exp_avg1 = utils.EMAMeter(alpha=0.9)
+        self.exp_avg2 = utils.EMAMeter(alpha=0.9)
 
         self.gen_error_alpha = 0.2  # args.gen_error_alpha
         self.gen_error_alpha_lambda = 0.2  # args.gen_error_alpha_lambda
@@ -269,18 +260,9 @@ class REINFORCE(nn.Module):
     def step(self, train_X, train_y, val_X, val_y, alpha_optim, w_optim,
              w_normal, w_reduce,
              global_progress):
-        #     # train(task, model, reinforce, w_opt, a_opt, lr,
-        #             global_progress, config, warm_up)
 
-        # TODO: To get alphas get raw or normalized alpha values need ot
-        # to check, either .alphas() or _get_normalized_alphas()
         # TODO: find way of applying to pw alphas?
-        # TODO: Move this step 1 function up
-        # w_normal, w_reduce, d_normal, d_reduce = self.model.get_alphas()
-
         # Discretize alphas
-        d_normal = self.model.discretize_alphas(w_normal)
-        d_reduce = self.model.discretize_alphas(w_reduce)
 
         alpha_optim.zero_grad()
 
@@ -288,6 +270,8 @@ class REINFORCE(nn.Module):
             #     # self.model.alphas
             #     # TODO: discritize alphas and adjust training obj
             #     # disc_weights = self.alpha.module.discretize(weights)
+            d_normal = self.model.discretize_alphas(w_normal)
+            d_reduce = self.model.discretize_alphas(w_reduce)
             loss_disc, acc, loss_train, loss_diff = self.training_objective(
                 train_X, train_y,
                 d_normal, d_reduce,
@@ -400,33 +384,7 @@ class REINFORCE(nn.Module):
         # TODO: loss = loss + self.gen_error_alpha_lambda * loss_diff
         loss = loss_train + self.gen_error_alpha_lambda * loss_diff
 
-        # accuracy = get_accuracy(logits_val, y_val)
-        accuracy = get_accuracy(logits_train, y_train)
+        _, pred_train = torch.max(logits_train, dim=-1)
+        accuracy = utils.accuracy(pred_train, y_train)
 
         return loss, accuracy, loss_train, loss_diff
-
-
-def get_accuracy(logits, targets):
-    """Compute the accuracy the test/query points
-
-    Parameters
-    ----------
-    logits : `torch.FloatTensor` instance
-        Outputs/logits of the model on the query points. This tensor has shape
-        `(num_examples, num_classes)`.
-
-    targets : `torch.LongTensor` instance
-        A tensor containing the targets of the query points. This tensor has
-        shape `(num_examples,)`.
-
-    Returns
-    -------
-    accuracy : `torch.FloatTensor` instance
-        Mean accuracy on the query points
-    """
-    _, predictions = torch.max(logits, dim=-1)
-    return torch.mean(predictions.eq(targets).float())
-
-
-"""Gumbel Softmax distribution functions from UNAS
-"""
