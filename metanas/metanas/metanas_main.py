@@ -7,12 +7,13 @@ import numpy as np
 import pickle
 import torch
 import torch.nn.functional as F
+
 from metanas.meta_optimizer.reptile import NAS_Reptile
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
-from metanas.task_optimizer.darts import Darts
-from metanas.task_optimizer.snas import UNAS
+from metanas.task_optimizer.unas import UNAS
+
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
@@ -88,6 +89,25 @@ def meta_architecture_search(
     config.edges = sum(i for i in range(2, config.nodes+2))
     config.switches_normal, config.switches_reduce = init_switches(
         config.edges)
+
+    # UNAS variables
+    config.cutout = False
+
+    # Alpha loss
+    config.alpha_loss = False
+    config.alpha_loss_iter = 5000
+    config.alpha_loss_lambda = 0.2
+
+    # Generalization error
+    config.gen_error_alpha = True
+    # Coefficient to combine train/val loss with generalization error loss
+    config.gen_error_alpha_lambda = 0.5
+
+    # Gumbel options
+    config.same_alpha_minibatch = False
+    config.gumbel_soft_temperature = 0.4
+    config.gumbel_softmax_method = 'REINFORCE' # TODO: Add rebar and latency loss
+    config.gumbel_soften_epsilon = 0.0
     ####
 
     # Find mistakes in gradient computation
@@ -597,7 +617,6 @@ def train(
             meta_state = copy.deepcopy(meta_model.state_dict())
 
             # copy also the optimizer states
-            # TODO: Omit a_optim
             meta_optims_state = [
                 copy.deepcopy(meta_optimizer.w_meta_optim.state_dict()),
                 copy.deepcopy(meta_optimizer.a_meta_optim.state_dict()),
@@ -654,7 +673,6 @@ def train(
             )
 
             # reset the states so that meta training doesnt see meta testing
-            # TODO: Omit a_optim
             meta_optimizer.w_meta_optim.load_state_dict(meta_optims_state[0])
             meta_optimizer.a_meta_optim.load_state_dict(meta_optims_state[1])
             task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
@@ -741,7 +759,6 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     meta_state = copy.deepcopy(meta_model.state_dict())
 
     # copy also the task optimizer states
-    # TODO: Omit a_optim
     meta_optims_state = [
         copy.deepcopy(task_optimizer.w_optim.state_dict()),
         copy.deepcopy(task_optimizer.a_optim.state_dict()),
@@ -791,7 +808,6 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
             # load meta state
             meta_model.load_state_dict(meta_state)
 
-            # TODO: Omit a_optim
             task_optimizer.w_optim.load_state_dict(meta_optims_state[0])
             task_optimizer.a_optim.load_state_dict(meta_optims_state[1])
 

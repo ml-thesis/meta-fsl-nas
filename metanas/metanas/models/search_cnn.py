@@ -123,24 +123,25 @@ class SearchCNNController(nn.Module):
         # initialize architect parameters: alphas
         if PRIMITIVES is None:
             PRIMITIVES = gt.PRIMITIVES
-
-        # Previously, adjust for progressive DARTS,
         self.primitives = PRIMITIVES
 
-        # checks how many ops to enable
+        # P-DARTS, checks how many ops to enable
         n_ops = sum(list(map(int, switches_normal[0])))
         self.n_ops = n_ops
         print("P-DARTS: Config number of n_ops enabled, ", n_ops)
 
+        # UNAS adjustments to sample alphas by REINFORCE gradient
+        # estimator
         self.alpha_normal = nn.ParameterList()
         self.alpha_reduce = nn.ParameterList()
 
         for i in range(n_nodes):
-            # create alpha parameters over parallel operations
+            # create alpha parameters over parallel operations,
+            # note the requires_grad
             self.alpha_normal.append(nn.Parameter(
-                1e-3 * torch.randn(i + 2, n_ops)))
+                1e-3 * torch.randn(i + 2, n_ops, requires_grad=True)))
             self.alpha_reduce.append(nn.Parameter(
-                1e-3 * torch.randn(i + 2, n_ops)))
+                1e-3 * torch.randn(i + 2, n_ops, requires_grad=True)))
 
         assert not (
             use_hierarchical_alphas and use_pairwise_input_alphas
@@ -235,59 +236,19 @@ class SearchCNNController(nn.Module):
             weights_pw_reduce,
         )
 
-    # TODO: Former get_alphas
     def discretize_alphas(self, alphas):
         """Return the discrete/normalized alphas and the
         raw alphas for UNAS"""
-        alphas = [self.apply_normalizer(
-            alpha) for alpha in alphas]
-        
+        alphas = [self.apply_normalizer(alpha) for alpha in alphas]
         return alphas
 
-    def sample_alphas(self, temperature=0.4, softeps_weights=0.02):
-        """TODO: Remove this sampling"""
-        def sample_weight_edge(edge):
-
-            for curr_op in range(self.n_ops):
-                edge = edge.unsqueeze(1)
-
-                if softeps_weights > 0:
-                    q = F.softmax(edge, dim=-1)
-                    edge = torch.log(q + softeps_weights)
-
-                w = gumbel_softmax_sample(edge, temperature)
-                # TODO: original code transposes view, .view(b, -1, 1)
-                return w
-
-        sample_normal, sample_reduce = [],  []
-        for alpha in self.alpha_reduce:
-            weights = []
-            for i, edge in enumerate(alpha):
-                edge = edge.data.clone().cuda()
-                weight = sample_weight_edge(edge)
-                weights.append(weight)
-
-            # TODO: To obtain discrete weights?
-            # use normalizer in the model
-            # F.softmax(1000 * w.clone().detach(), dim=-1)
-
-            sample_reduce.append(torch.cat(weights, dim=1).T)
-
-        for alpha in self.alpha_reduce:
-            weights = []
-            for i, edge in enumerate(alpha):
-                edge = edge.data.clone().cuda()
-                weight = sample_weight_edge(edge)
-                weights.append(weight)
-
-            # TODO: To obtain discrete weights?
-            # use normalizer in the model
-            # F.softmax(1000 * w.clone().detach(), dim=-1)
-
-            sample_normal.append(torch.cat(weights, dim=1).T)
-
-        # Disable op reduction to test this in metaNAS?
-        return sample_reduce, sample_normal
+    def set_alphas(self, alpha_normal, alpha_reduce):
+        """We set the alphas"""
+        # TODO: Set values of module differently
+        print(alpha_normal[0])
+        for i, (r, n) in enumerate(zip(alpha_reduce, alpha_normal)):
+            self.alpha_normal[i].data = r
+            self.alpha_reduce[i].data = n
 
     def reduce_operations(self, config, current_stage):
         """P-DARTS, Obtain alpha weights to reduce the operations by the
@@ -321,10 +282,9 @@ class SearchCNNController(nn.Module):
 
     def _adjust_switches(self, weights, switches, ops_drop,
                          edges):
-
-        # Original P-DARTS, There are 4 intermediate nodes in a cell,
-        # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-        # number of edges in a cell.
+        """Original P-DARTS, There are 4 intermediate nodes in a cell,
+        resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+        number of edges in a cell."""
         for i in range(edges):
             idxs = np.where(switches[i])[0].tolist()
 

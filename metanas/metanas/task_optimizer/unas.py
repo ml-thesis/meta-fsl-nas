@@ -1,33 +1,23 @@
-import copy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import numpy as np
+import matplotlib.pyplot as plt
 
+import copy
 from collections import OrderedDict, namedtuple
 
 from metanas.utils import utils
-from metanas.models.search_cnn import SearchCNNController
-
-import matplotlib.pyplot as plt
-
 from metanas.utils import genotypes as gt
-from metanas.task_optimizer import Alphas
+from metanas.models.search_cnn import SearchCNNController
+from metanas.task_optimizer.alpha import Alpha
 
 class UNAS:
     def __init__(self, model, config, do_scheduler_lr=False):
         self.config = config
         self.model = model
         self.do_schedule_lr = do_scheduler_lr
-
-        self.alphas = Alpha(num_normal=1,
-                  num_reduce=1,
-                  num_op=len(gt.PRIMITIVES_FEWSHOT), # TODO: Should be changing with P-DARTS settings
-                  num_nodes=config.n_nodes,
-                  gsm_soften_eps=0.0, # TODO: Add to config
-                  gsm_temperature=0.4, # TODO: Add to config
-                  same_alpha_minibatch=args.same_alpha_minibatch)
 
         self.task_train_steps = config.task_train_steps
         self.test_task_train_steps = config.test_task_train_steps
@@ -41,7 +31,7 @@ class UNAS:
             weight_decay=self.config.w_weight_decay,
         ) 
 
-        # architecture optimizer, self.arch_topimizer
+        # architecture optimizer
         self.a_optim = torch.optim.Adam(
             model.alphas(),
             self.config.alpha_lr,
@@ -49,16 +39,16 @@ class UNAS:
             weight_decay=self.config.alpha_weight_decay,
         )
 
+        # TODO: For Factorized cell structure
+        self.alpha = Alpha(self.model.alpha_normal, self.model.alpha_reduce)
 
         self.architect = REINFORCE(
             self.model,
+            self.config,
+            self.alpha,
             self.config.w_momentum,
             self.config.w_weight_decay
         )
-
-        # weights generalization error
-        self.gen_error_alpha = 0.1 #args.gen_error_alpha
-        self.gen_error_alpha_lambda = 0.1 #args.gen_error_alpha_lambda
 
         self.loss = None
         self.accuracy = None
@@ -67,14 +57,16 @@ class UNAS:
         self.reset_counter()
 
     def reset_counter(self):
-        """Resets counters."""
+        """Resets counters
+        """
         self.count = 0
         self.loss = utils.AverageMeter()
         self.accuracy = utils.AverageMeter()
         self.loss_diff_sign = utils.AverageMeter()
 
     def mean_accuracy(self):
-        """Return mean accuracy."""
+        """Return mean accuracy
+        """
         return self.accuracy.avg
 
     def step(
@@ -122,15 +114,14 @@ class UNAS:
                 self.architect,
                 self.w_optim,
                 self.a_optim,
+                self.alpha,
                 lr,
                 global_progress,
                 self.config,
                 warm_up,
             )
 
-        # TODO: here should be added logging and removal of droppath etc.
-
-        #####
+        # TODO: Add logging as done in darts.py
 
         # Test evaluation model at the end of training,
         with torch.no_grad():
@@ -178,7 +169,7 @@ class UNAS:
         # task_info.sparse_num_params = self.model.get_sparse_num_params(
         #     self.model.alpha_prune_threshold
         # )
-        raise task_info
+        return task_info
 
 
 def train(task,
@@ -186,7 +177,8 @@ def train(task,
           architect,
           w_optim,
           alpha_optim,
-          lr,
+          alpha,
+          lr, # weight learning rate
           global_progress,
           config,
           warm_up=False):
@@ -200,10 +192,9 @@ def train(task,
         val_X, val_y = val_X.to(config.device), val_y.to(config.device)
         N = train_X.size(0)
 
-        # TODO: Originally done in train step in UNAS
-        # c_... variables are copies with no grad and clone of w_reduce
-        # TODO: Refactor to alphas module?
-        w_reduce, w_normal, c_reduce, c_normal = architect.sample_alphas()
+        # w_reduce, w_normal, c_reduce, c_normal = architect.sample_alphas()
+        w_normal, w_reduce = alpha()
+        w_normal_no_grad, w_reduce_no_grad = alpha.clone_weights(w_normal, w_reduce)
 
         # phase 2. architect step (alpha)
         # TODO: Do we pass the validation data here or no?
@@ -215,7 +206,10 @@ def train(task,
         # phase 1. child network step (w)
         # TODO: Pass alphas, however still ignoring the pairwise alphas
         w_optim.zero_grad()
-        logits = model(train_X, c_reduce, c_normal)
+
+        model.set_alphas(w_normal_no_grad, w_reduce_no_grad)
+
+        logits = model(train_X)
         loss = model.criterion(logits, train_y)
 
         # TODO: We don't have the grad_fn so this is required?
@@ -228,10 +222,9 @@ def train(task,
 
 
 class REINFORCE:
-    # This is the architect in the standard DARTS implementation
-    # TODO: Could also attempt, REBAR and PPO?
-
-    def __init__(self, model, w_momentum, w_weight_decay):
+    """This is the architect in the standard DARTS implementation
+    """
+    def __init__(self, model, config, alpha, w_momentum, w_weight_decay):
         """
         Args:
             net
@@ -240,10 +233,10 @@ class REINFORCE:
 
         self.model = model
         self.v_model = copy.deepcopy(model)
+
+        self.alpha = alpha
         self.w_momentum = w_momentum
         self.w_weight_decay = w_weight_decay
-
-        self.
 
         # Reset counters
         self.count = 0
@@ -254,22 +247,18 @@ class REINFORCE:
         self.exp_avg1 = utils.EMAMeter(alpha=0.9)
         self.exp_avg2 = utils.EMAMeter(alpha=0.9)
 
-        self.gen_error_alpha = 0.2  # args.gen_error_alpha
-        self.gen_error_alpha_lambda = 0.2  # args.gen_error_alpha_lambda
+        self.gen_error_alpha = config.gen_error_alpha
+        self.gen_error_alpha_lambda = config.gen_error_alpha_lambda 
 
     def step(self, train_X, train_y, val_X, val_y, alpha_optim, w_optim,
              w_normal, w_reduce,
              global_progress):
 
         # TODO: find way of applying to pw alphas?
-        # Discretize alphas
-
         alpha_optim.zero_grad()
 
         with torch.no_grad():
-            #     # self.model.alphas
-            #     # TODO: discritize alphas and adjust training obj
-            #     # disc_weights = self.alpha.module.discretize(weights)
+            # TODO: Originally done by self.module.alphas
             d_normal = self.model.discretize_alphas(w_normal)
             d_reduce = self.model.discretize_alphas(w_reduce)
             loss_disc, acc, loss_train, loss_diff = self.training_objective(
@@ -290,13 +279,9 @@ class REINFORCE:
         reward = (loss_disc - baseline).detach()
         # TODO: pull code from alphas module and more sure this
         # works for our implementation as well
-        log_q_d = self.log_probability(w_normal, w_reduce, d_normal, d_reduce)
+        log_q_d = self.alpha.log_probability(w_normal, w_reduce, d_normal, d_reduce)
         loss = torch.mean(log_q_d * reward) + baseline
-        print(log_q_d)
-        print(reward)
-        print(baseline)
-        print(loss)
-
+        
         loss_train, loss_diff = torch.mean(loss_train), torch.mean(loss_diff)
 
         # TODO: Log entropy possibly
@@ -308,83 +293,43 @@ class REINFORCE:
         alpha_optim.step()
 
         self.loss.update(loss.data, 1)
-        self.accuracy.update(acc, 1)
+        # self.accuracy.update(acc, 1)
         self.count += 1
 
         # TODO: Possible reporting here
 
-    def log_probability(self, w_normal, w_reduce, d_normal, d_reduce):
-        def log_q(d, a):
-            return torch.sum(torch.sum(d * a, dim=-1) - torch.logsumexp(
-                a, dim=-1), dim=0)
-
-        log_q_d = 0
-        for n_edges, d_edges in zip(w_normal, d_normal):
-            for i in range(len(n_edges)):
-                a = n_edges[i]
-                w = d_edges[i]
-                log_q_d += log_q(w, a)
-
-        for n_edges, d_edges in zip(w_reduce, d_reduce):
-            for i in range(len(n_edges)):
-                a = n_edges[i]
-                w = d_edges[i]
-                log_q_d += log_q(w, a)
-        return log_q_d
-
-    def entropy_loss(self, w_normal, w_reduce):
-        def entropy(logit):
-            q = F.softmax(logit, dim=-1)
-            return - torch.sum(torch.sum(
-                q * logit, dim=-1) - torch.logsumexp(logit, dim=-1), dim=0)
-
-        entr = 0
-        for n_edges in w_normal:
-            for i in range(len(n_edges)):
-                logit = n_edges[i]
-                entr += entropy(logit)
-
-        for n_edges in w_reduce:
-            for i in range(len(n_edges)):
-                logit = n_edges[i]
-                entr += entropy(logit)
-        return torch.mean(entr, dim=0)
-
-    def sample_alphas(self):
-        """Sample new weights,
-        TODO: Make temperature configurable also do we anneal
-        the temperature in sample lphas
-        """
-        sample_reduce, sample_normal = self.model.sample_alphas()
-
-        # TODO: The original implementation also supplies a copy
-        # of the alphas.
-        c_reduce, c_normal = copy.deepcopy(
-            sample_reduce), copy.deepcopy(sample_normal)
-        return sample_reduce, sample_normal, c_reduce, c_normal
-
     def training_objective(self, X_train, y_train, w_normal, w_reduce,
                            X_val, y_val):
-        # TODO: Pass more variables
-        # def training_obj(self, train, train_target, weights,
-        #                  model_opt, val, val_target, global_step):
 
-        logits_train = self.model(X_train, w_normal, w_reduce)
-        loss_train = self.model.loss(X_train, y_train)
-        print("loss:", loss_train)
+        if not self.gen_error_alpha:
+            # TODO: Find way to pass alphas to model
+            # model.set_alphas()
+            self.model.set_alphas(w_normal, w_reduce)
+            logits_train = self.model(X_train)
+            loss_train = self.model.loss(X_train, y_train)
 
-        # TODO: This is actually test?
-        # logits_val = self.model(X_val)
-        loss_val = self.model.loss(X_val, y_val)
+            _, pred_train = torch.max(logits_train, dim=-1)
+            # accuracy = utils.accuracy(pred_train, y_train)
 
-        loss_diff = torch.abs(loss_val - loss_train)
-        self.loss_diff_sign.update(
-            torch.mean(((loss_val - loss_train) > 0).float()).data)
+            # final loss
+            loss_diff = 0
+            loss = loss_train
+        else:
+            # TODO: Find way to pass alphas to model
+            # model.set_alphas()
+            self.model.set_alphas(w_normal, w_reduce)
+            logits_train = self.model(X_train)
+            loss_train = self.model.loss(X_train, y_train)
 
-        # TODO: loss = loss + self.gen_error_alpha_lambda * loss_diff
-        loss = loss_train + self.gen_error_alpha_lambda * loss_diff
+            # TODO: Double check
+            loss_val = self.model.loss(X_val, y_val)
+            loss_diff = torch.abs(loss_val - loss_train)
 
-        _, pred_train = torch.max(logits_train, dim=-1)
-        accuracy = utils.accuracy(pred_train, y_train)
+            self.loss_diff_sign.update(
+                torch.mean(((loss_val - loss_train) > 0).float()).data)
 
+            # TODO: loss = loss + self.gen_error_alpha_lambda * loss_diff
+            loss = loss_train + self.gen_error_alpha_lambda * loss_diff
+
+        accuracy = 0.5
         return loss, accuracy, loss_train, loss_diff

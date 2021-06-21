@@ -226,7 +226,7 @@ class EMAMeter:
         self.alpha = alpha
         self.avg = 0.0
 
-    def update(self, val, _):
+    def update(self, val):
         self.avg = self.alpha * val + (1 - self.alpha) * self.avg
 
     def reset(self):
