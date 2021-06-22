@@ -4,7 +4,7 @@ from collections import OrderedDict
 
 
 def get_accuracy(logits, targets):
-    """Compute the accuracy (after adaptation) of MAML on the test/query points
+    """Compute the accuracy the test/query points
 
     Parameters
     ----------
@@ -13,7 +13,7 @@ def get_accuracy(logits, targets):
         `(num_examples, num_classes)`.
 
     targets : `torch.LongTensor` instance
-        A tensor containing the targets of the query points. This tensor has 
+        A tensor containing the targets of the query points. This tensor has
         shape `(num_examples,)`.
 
     Returns

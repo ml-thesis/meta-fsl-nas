@@ -7,11 +7,13 @@ import numpy as np
 import pickle
 import torch
 import torch.nn.functional as F
+
 from metanas.meta_optimizer.reptile import NAS_Reptile
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
-from metanas.task_optimizer.darts import Darts
+from metanas.task_optimizer.unas import UNAS
+
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
@@ -39,7 +41,7 @@ cf. 3rd-party-licenses.txt in root directory.
 
 
 def meta_architecture_search(
-    config, task_optimizer_cls=Darts, meta_optimizer_cls=NAS_Reptile
+    config, task_optimizer_cls=UNAS, meta_optimizer_cls=NAS_Reptile
 ):
     config.logger.info("Start meta architecture search")
 
@@ -52,7 +54,9 @@ def meta_architecture_search(
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    config.drop_number_operations = [2, 3, 2]
+    # TODO: Set to 0 to comply with UNAS changes.
+    # config.drop_number_operations = [2, 3, 2]
+    config.drop_number_operations = [0, 0, 0]
 
     # Each stage, the super-network is trained for 25 epochs (batch size 96).
     # Warm-start/only tuning network parameters in first 10 epochs.
@@ -85,6 +89,25 @@ def meta_architecture_search(
     config.edges = sum(i for i in range(2, config.nodes+2))
     config.switches_normal, config.switches_reduce = init_switches(
         config.edges)
+
+    # UNAS variables
+    config.cutout = False
+
+    # Alpha loss
+    config.alpha_loss = False
+    config.alpha_loss_iter = 5000
+    config.alpha_loss_lambda = 0.2
+
+    # Generalization error
+    config.gen_error_alpha = True
+    # Coefficient to combine train/val loss with generalization error loss
+    config.gen_error_alpha_lambda = 0.5
+
+    # Gumbel options
+    config.same_alpha_minibatch = False
+    config.gumbel_soft_temperature = 0.4
+    config.gumbel_softmax_method = 'REINFORCE' # TODO: Add rebar and latency loss
+    config.gumbel_soften_epsilon = 0.0
     ####
 
     # Find mistakes in gradient computation
@@ -246,23 +269,6 @@ def _build_model(config, task_distribution, normalizer,
         else:
             assert (switches_normal is None or switches_reduce is None
                     ), "Only works for Progressive DARTS search currently"
-
-        # Old configuration
-        # meta_model = SearchCNNController(
-        #     task_distribution.n_input_channels,
-        #     config.init_channels,
-        #     task_distribution.n_classes,
-        #     config.layers,
-        #     n_nodes=config.nodes,
-        #     reduction_layers=config.reduction_layers,
-        #     device_ids=config.gpus,
-        #     normalizer=normalizer,
-        #     PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
-        #     feature_scale_rate=1,
-        #     use_hierarchical_alphas=config.use_hierarchical_alphas,
-        #     use_pairwise_input_alphas=config.use_pairwise_input_alphas,
-        #     alpha_prune_threshold=config.alpha_prune_threshold,
-        # )
 
     elif config.meta_model == "maml":
 
@@ -547,7 +553,6 @@ def train(
 
             # Set the dropout rate for skip-connections,
             dropout_rate = dropout_current_stage
-            # meta_model.drop_out_skip_connections(dropout_rate)
 
             config.logger.info(
                 f"dropout ops = {config.dropout_operations[current_stage]}")
@@ -816,7 +821,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
         config.logger.info(
             f"Test data evaluation{prefix}:: [{eval_epoch:2d}/{config.eval_epochs}] "
             f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
-            f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
+            f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, "
+            f"{1.00:.1%})"
             f" \n Sparse_num_params (mean, min, max): {np.mean(paramas_logger)}, "
             f"{np.min(paramas_logger)}, {np.max(paramas_logger)}"
         )

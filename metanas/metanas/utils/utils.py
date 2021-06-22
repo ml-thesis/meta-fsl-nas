@@ -1,3 +1,19 @@
+
+
+
+
+import datetime
+import fcntl
+import time
+import logging
+import os
+import shutil
+import tempfile
+from collections import OrderedDict
+import numpy as np
+import torch
+import torch.nn as nn
+
 """ Utilities 
 Copyright (c) 2021 Robert Bosch GmbH
 
@@ -20,20 +36,6 @@ which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
 """
 
-
-
-
-import datetime
-import fcntl
-import time
-import logging
-import os
-import shutil
-import tempfile
-from collections import OrderedDict
-import numpy as np
-import torch
-import torch.nn as nn
 def set_hyperparameter(config):
     """Load/set hyperparameter settings based on predefined config"""
 
@@ -224,7 +226,7 @@ class EMAMeter:
         self.alpha = alpha
         self.avg = 0.0
 
-    def update(self, val, _):
+    def update(self, val):
         self.avg = self.alpha * val + (1 - self.alpha) * self.avg
 
     def reset(self):
