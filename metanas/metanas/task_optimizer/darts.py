@@ -1,3 +1,10 @@
+import copy
+import torch
+import torch.nn as nn
+from collections import OrderedDict, namedtuple
+from metanas.utils import utils
+from metanas.models.search_cnn import SearchCNNController
+
 """ DARTS algorithm
 Copyright (c) 2021 Robert Bosch GmbH
 
@@ -19,14 +26,6 @@ cf. 3rd-party-licenses.txt in root directory.
 """
 
 
-
-
-import copy
-import torch
-import torch.nn as nn
-from collections import OrderedDict, namedtuple
-from metanas.utils import utils
-from metanas.models.search_cnn import SearchCNNController
 class Darts:
     def __init__(self, model, config, do_schedule_lr=False):
         self.config = config
@@ -66,9 +65,10 @@ class Darts:
         test_phase=False,
         alpha_logger=None,
         sparsify_input_alphas=None,
-        switches_normal=None,
+        switches_normal=None,  # P-DARTS variables
         switches_reduce=None,
-        num_of_sk=None
+        num_of_sk=None,
+        dropout_sk=0.0
     ):
 
         log_alphas = False
@@ -122,9 +122,16 @@ class Darts:
             )
 
         if self.config.drop_path_prob > 0.0:
-            # do drop path if not test phase (=in train phase) or if also use in test phase
+            # do drop path if not test phase (=in train phase) or if also use
+            # in test phase
             if not test_phase or self.config.use_drop_path_in_meta_testing:
                 self.model.drop_path_prob(self.config.drop_path_prob)
+
+            # Similar to drop path, do not use drop out skip-connections
+            # while in test phase
+        if dropout_sk > 0.0:
+            if not test_phase:
+                self.model.drop_out_skip_connections(dropout_sk)
 
         # task train_steps = epochs per task
         for train_step in range(train_steps):
@@ -214,8 +221,10 @@ class Darts:
         if self.config.drop_path_prob > 0.0:
             self.model.drop_path_prob(0.0)
 
-        with torch.no_grad():
+        # TODO: Also, remove skip-connection dropouts?
+        # if self.model.
 
+        with torch.no_grad():
             for batch_idx, batch in enumerate(task.test_loader):
 
                 x_test, y_test = batch
@@ -372,8 +381,8 @@ class Architect:
         dalpha = v_grads[: len(v_alphas)]
         dw = v_grads[len(v_alphas):]
 
-        if self.use_first_order_darts:  # use first oder approximation for darts
-
+        # use first order approximation for darts
+        if self.use_first_order_darts:
             with torch.no_grad():
                 for alpha, da in zip(self.net.alphas(), dalpha):
                     alpha.grad = da

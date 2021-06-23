@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/custom/results
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/custom/results/og_short
 		
 mkdir -p $TRAIN_DIR
 
@@ -28,8 +28,8 @@ args=(
     # test examples per class
     --q 1 \
 
-    --meta_model_prune_threshold 0.01 \
-    --alpha_prune_threshold 0.01 \
+    --meta_model_prune_threshold 0.001 \
+    --alpha_prune_threshold 0.001 \
     # Meta Learning
     # Original settings 30_000 meta epochs
     # and warm_up_epochs 15_000.

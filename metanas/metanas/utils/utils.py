@@ -55,11 +55,11 @@ def set_hyperparameter(config):
     elif config.hp_setting == "og_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
         config.n_train = 15
-        config.batch_size = 20
+        config.batch_size = 30  # P-DARTS uses batch_size 96?
         config.batch_size_test = 10
         config.meta_batch_size = 10
-        config.w_lr = 0.005
-        config.alpha_lr = 0.005
+        config.w_lr = 0.0006
+        config.alpha_lr = 0.0006
         config.w_meta_lr = 1.0
         config.a_meta_lr = 0.6
         config.a_meta_anneal = 0
@@ -73,8 +73,8 @@ def set_hyperparameter(config):
         config.batch_size = 1
         config.batch_size_test = 2
         config.meta_batch_size = 2
-        config.w_lr = 0.005
-        config.alpha_lr = 0.005
+        config.w_lr = 0.05
+        config.alpha_lr = 0.05
         config.w_meta_lr = 1.0
         config.a_meta_lr = 0.6
         config.a_meta_anneal = 0

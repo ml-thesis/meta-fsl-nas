@@ -27,7 +27,7 @@ GNU Affero General Public License for more details.
 """
 
 
-""" 
+"""
 Based on https://github.com/khanrc/pt.darts
 which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
@@ -235,13 +235,13 @@ class SearchCNNController(nn.Module):
         )
 
     def reduce_operations(self, config, current_stage):
-        """P-DARTS, Obtain alpha weights to reduce the operations by the specified
-            amount for the current stage.
+        """P-DARTS, Obtain alpha weights to reduce the operations by the
+        specified amount for the current stage.
         """
         switches_normal = copy.deepcopy(config.switches_normal)
         switches_reduce = copy.deepcopy(config.switches_reduce)
 
-        # TODO: Add again if we consider the None operations
+        # Add again if we consider the None operations
         # last_stage = current_stage == config.architecture_stages
 
         # Number of operations to drop, -1 for the index
@@ -271,7 +271,7 @@ class SearchCNNController(nn.Module):
         for i in range(edges):
             idxs = np.where(switches[i])[0].tolist()
 
-            # TODO: If None in primitives, add check for this operation
+            # If None in primitives, add check for this operation
             # if last_stage:
             #     # for the last stage, drop all Zero operations
             #     drop = self._get_min_k_no_zero(
@@ -499,12 +499,19 @@ class SearchCNNController(nn.Module):
 
     def drop_path_prob(self, p):
         """ Set drop path probability """
-        # P-DARTS, set the Dropout variable for nn.Dropout after
-        # the skip-connection instead of DropPath
 
         for module in self.net.modules():
-            if isinstance(module, ops.DropPath_) or \
-                    isinstance(module, nn.Dropout):
+            if isinstance(module, ops.DropPath_):
+                module.p = p
+
+    def drop_out_skip_connections(self, p):
+        """P-DARTS, set the Dropout variable for nn.Dropout after
+        the skip-connection instead of DropPath
+        """
+        self.dropout_skip_connections = p
+
+        for module in self.net.modules():
+            if isinstance(module, nn.Dropout):
                 module.p = p
 
     def forward(self, x, sparsify_input_alphas=None):
@@ -618,10 +625,12 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, switches_normal=None, switches_reduce=None,
+    def genotype(self, switches_normal, switches_reduce,
                  limit_skip_connections=None):
+        """Generate genotype based on current weights and switches
+        """
         if self.use_pairwise_input_alphas:
-            # TODO: Implement for staging for pairwise alphas
+            # Original implementation uses, gt.parse_pairwise
             weights_pw_normal = [
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
             ]
@@ -629,17 +638,28 @@ class SearchCNNController(nn.Module):
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
             ]
 
-            gene_normal = gt.parse_pairwise(
-                self.alpha_normal, weights_pw_normal,
+            gene_normal = gt.parse_pairwise_switches(
+                self.alpha_normal, weights_pw_normal, switches_normal,
                 primitives=self.primitives
             )
-            gene_reduce = gt.parse_pairwise(
-                self.alpha_reduce, weights_pw_reduce,
+            gene_reduce = gt.parse_pairwise_switches(
+                self.alpha_reduce, weights_pw_reduce, switches_reduce,
                 primitives=self.primitives
             )
+
+            # Limiting the skip connections, only applies to the normal cell.
+            if limit_skip_connections is not None:
+                gene_normal = gt.limit_skip_connections(
+                    self.alpha_normal, weights_pw_normal, switches_normal,
+                    num_of_sk=limit_skip_connections,
+                    nodes=self.n_nodes,
+                    primitives=self.primitives)
+
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
-        elif switches_normal is not None and switches_reduce is not None:
+        else:
+            # Original implementation without switches for operations,
+            # and without pairwise (beta) alphas using gt.parse.
             gene_normal = gt.parse_switches(
                 self.alpha_normal, switches_normal, k=2,
                 primitives=self.primitives)
@@ -647,20 +667,13 @@ class SearchCNNController(nn.Module):
                 self.alpha_reduce, switches_normal, k=2,
                 primitives=self.primitives)
 
+            # Limiting the skip connections, only applies to the normal cell.
             if limit_skip_connections is not None:
-                # Limiting the skip connections, only applies to the normal
-                # alphas.
                 gene_normal = gt.limit_skip_connections(
                     self.alpha_normal, switches_normal, k=2,
+                    num_of_sk=limit_skip_connections,
+                    nodes=self.n_nodes,
                     primitives=self.primitives)
-
-        else:
-            # Original implementation without switches for operations,
-            # gene_normal = gt.parse(
-            #     self.alpha_normal, k=2, primitives=self.primitives)
-            # gene_reduce = gt.parse(
-            #     self.alpha_reduce, k=2, primitives=self.primitives)
-            raise NotImplementedError
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 
@@ -689,8 +702,9 @@ class SearchCNNController(nn.Module):
             yield n, p
 
     def arch_parameters(self):
-        """P-DARTS method to obtain architecture parameters
-            TODO: Might need to first soft prune the weights
+        """P-DARTS method to obtain architecture parameters,
+        these variables are used in reduce_operations and are
+        not normalized
         """
         self._arch_parameters = [
             self.alpha_normal,
