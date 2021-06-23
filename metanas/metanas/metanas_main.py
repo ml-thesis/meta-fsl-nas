@@ -114,6 +114,7 @@ def meta_architecture_search(
         from metanas.tasks.torchmeta_loader import (
             OmniglotFewShot,
             MiniImageNetFewShot as miniImageNetFewShot,
+            MixedOmniglotTripleMNISTFewShot
         )
     else:
         raise RuntimeError(f"Other data loaders deprecated.")
@@ -122,11 +123,15 @@ def meta_architecture_search(
         task_distribution_class = OmniglotFewShot
     elif config.dataset == "miniimagenet":
         task_distribution_class = miniImageNetFewShot
+    elif config.dataset == "mixedomniglottriplemnist":
+        task_distribution_class = MixedOmniglotTripleMNISTFewShot
+
     else:
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
     # task distribution
-    # TODO: Adjusted to download=True, to force the download configure this
+    # Adjusted to download=True, to force the download, this doesn't
+    # do any harm as the download will never retrigger.
     task_distribution = task_distribution_class(config, download=True)
 
     # meta model
@@ -246,23 +251,6 @@ def _build_model(config, task_distribution, normalizer,
         else:
             assert (switches_normal is None or switches_reduce is None
                     ), "Only works for Progressive DARTS search currently"
-
-        # Old configuration
-        # meta_model = SearchCNNController(
-        #     task_distribution.n_input_channels,
-        #     config.init_channels,
-        #     task_distribution.n_classes,
-        #     config.layers,
-        #     n_nodes=config.nodes,
-        #     reduction_layers=config.reduction_layers,
-        #     device_ids=config.gpus,
-        #     normalizer=normalizer,
-        #     PRIMITIVES=gt.PRIMITIVES_FEWSHOT,
-        #     feature_scale_rate=1,
-        #     use_hierarchical_alphas=config.use_hierarchical_alphas,
-        #     use_pairwise_input_alphas=config.use_pairwise_input_alphas,
-        #     alpha_prune_threshold=config.alpha_prune_threshold,
-        # )
 
     elif config.meta_model == "maml":
 
