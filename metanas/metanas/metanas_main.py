@@ -43,50 +43,6 @@ def meta_architecture_search(
 ):
     config.logger.info("Start meta architecture search")
 
-    ####
-    # P-DARTS
-    # TODO: Move these configurations to argparse
-    # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
-    # DARTS in the initial stage.
-    config.architecture_stages = 3
-
-    # The number of operations preserved on each edge of the super-network are,
-    # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    config.drop_number_operations = [2, 3, 2]
-
-    # Each stage, the super-network is trained for 25 epochs (batch size 96).
-    # Warm-start/only tuning network parameters in first 10 epochs.
-    # Finally, the number of normal cells in the network increases in these
-    # three stages, to 5, 11, 17, respectively.
-    config.add_layers = 2
-
-    # Set these to be able to re-init them,
-    config.task_optimizer_cls = task_optimizer_cls
-    config.meta_optimizer_cls = meta_optimizer_cls
-
-    # Dropout rate on the operations
-    config.dropout_operations = [0, 0.3, 0.6]
-
-    # Meanwhile, we increase the number of initial channels from
-    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
-    config.init_channels_stages = [16, 28, 40]
-
-    # Start off with the first stage,
-    config.initial_channels = config.init_channels_stages[0]
-
-    # Discovered cells are allowed to keep M=2, skip connections.
-    # Use these for my experiment, M = 2
-    config.limit_skip_connections = None
-
-    # Initialize the variables for Search Space Approximation,
-    # Original P-DARTS, There are 4 intermediate nodes in a cell,
-    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-    # number of edges in a cell.
-    config.edges = sum(i for i in range(2, config.nodes+2))
-    config.switches_normal, config.switches_reduce = init_switches(
-        config.edges)
-    ####
-
     # Find mistakes in gradient computation
     torch.autograd.set_detect_anomaly(True)
 
@@ -104,6 +60,22 @@ def meta_architecture_search(
     # https://discuss.pytorch.org/t/what-does-torch-backends-cudnn-benchmark-do/5936
     torch.backends.cudnn.benchmark = True
 
+    # P-DARTS
+    # Set these to be able to re-init them,
+    config.task_optimizer_cls = task_optimizer_cls
+    config.meta_optimizer_cls = meta_optimizer_cls
+
+    # Start off with the first stage,
+    config.initial_channels = config.init_channels_stages[0]
+
+    # Initialize the variables for Search Space Approximation,
+    # Original P-DARTS, There are 4 intermediate nodes in a cell,
+    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+    # number of edges in a cell.
+    config.edges = sum(i for i in range(2, config.nodes+2))
+    config.switches_normal, config.switches_reduce = init_switches(
+        config.edges)
+
     # hyperparameter settings
     if config.use_hp_setting:
         config = utils.set_hyperparameter(config)
@@ -117,7 +89,7 @@ def meta_architecture_search(
             MixedOmniglotTripleMNISTFewShot
         )
     else:
-        raise RuntimeError(f"Other data loaders deprecated.")
+        raise RuntimeError("Other data loaders deprecated.")
 
     if config.dataset == "omniglot":
         task_distribution_class = OmniglotFewShot
@@ -1051,6 +1023,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to use drop path also during meta testing.",
     )
+
+    # P-DARTS
+    # Each stage, the super-network is trained for 25 epochs (batch size 96).
+    # Warm-start/only tuning network parameters in first 10 epochs.
+    # Finally, the number of normal cells in the network increases in these
+    # three stages, to 5, 11, 17, respectively.
+    parser.add_argument("--add_layers", type=int, default=2)
+
+    # Discovered cells are allowed to keep M=2, skip connections.
+    # Use these for my experiment, M = 2
+    parser.add_argument("--limit_skip_connections", type=int, default=2)
 
     # Architectures
     parser.add_argument("--init_channels", type=int, default=16)

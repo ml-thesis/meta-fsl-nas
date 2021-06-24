@@ -6,7 +6,6 @@ TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results
 		
 mkdir -p $TRAIN_DIR
 
-# TODO: Adjust this model path
 MODEL_PATH=/path/to/checkpoint/from/metatrain
 
 

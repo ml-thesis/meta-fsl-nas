@@ -221,8 +221,9 @@ class Darts:
         if self.config.drop_path_prob > 0.0:
             self.model.drop_path_prob(0.0)
 
-        # TODO: Also, remove skip-connection dropouts?
-        # if self.model.
+        # TODO: Also, remove skip-connection dropouts during evaluation
+        if dropout_sk > 0.0:
+            self.model.drop_out_skip_connections(0.0)
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(task.test_loader):

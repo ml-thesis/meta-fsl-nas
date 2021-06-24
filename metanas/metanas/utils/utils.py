@@ -37,6 +37,22 @@ import torch.nn as nn
 def set_hyperparameter(config):
     """Load/set hyperparameter settings based on predefined config"""
 
+    # Default P-DARTS settings
+    # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
+    # DARTS in the initial stage.
+    config.architecture_stages = 3
+
+    # The number of operations preserved on each edge of the super-network are,
+    # 8, 5, and 3 for stage 1, 2 and 3, respectively.
+    config.drop_number_operations = [2, 3, 2]
+
+    # Dropout rate on the operations
+    config.dropout_operations = [0, 0.3, 0.6]
+
+    # Meanwhile, we increase the number of initial channels from
+    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
+    config.init_channels_stages = [16, 28, 40]
+
     if config.hp_setting == "in_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
         config.n_train = 15

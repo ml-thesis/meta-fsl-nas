@@ -122,14 +122,11 @@ class SearchCNNController(nn.Module):
         # initialize architect parameters: alphas
         if PRIMITIVES is None:
             PRIMITIVES = gt.PRIMITIVES
-
-        # Previously, adjust for progressive DARTS,
-        # old, n_ops = len(PRIMITIVES)
         self.primitives = PRIMITIVES
 
         # checks how many ops to enable
         n_ops = sum(list(map(int, switches_normal[0])))
-        print("Number of n_ops enabled, ", n_ops)
+        print("P-DARTS: Config number of n_ops enabled, ", n_ops)
 
         self.alpha_normal = nn.ParameterList()
         self.alpha_reduce = nn.ParameterList()
