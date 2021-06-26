@@ -2,12 +2,13 @@
 from torch.utils.data import DataLoader, RandomSampler, TensorDataset
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
-from torchvision.transforms import Compose, Resize, ToTensor
+from torchvision.transforms import Compose, Resize, ToTensor, Grayscale
 from torchmeta.utils.data import BatchMetaDataLoader
 from torchmeta.datasets.helpers import miniimagenet
 
 from metanas.tasks.core import TaskDistribution, Task
 from metanas.tasks.mixed_omniglot_triplemnist import mixedomniglottriplemnist
+
 
 """Task distribution using tochmeta
 Copyright (c) 2021 Robert Bosch GmbH
@@ -106,6 +107,7 @@ def create_og_data_loader(
         download=download,
         use_vinyals_split=use_vinyals_split,
     )
+
     dataset = ClassSplitter(
         dataset, shuffle=True, num_train_per_class=n_shot,
         num_test_per_class=n_query
@@ -174,17 +176,38 @@ def create_mixed_omniglot_triplemnist_data_loader(
     download=False,
     seed=None,
 ):
+    """Create a torchmeta BatchMetaDataLoader for mixed Omniglot tripleMNIST
 
+    Args:
+        root: Path to mixed omniglot tripleMNIST root folder (containing an
+            'mixedomniglottriplemnist'` subfolder with the preprocess
+            json-Files or downloaded tar.gz-file).
+        meta_split: see torchmeta.datasets.mixedOmniglotTripleMNIST
+        k_way: Number of classes per task
+        n_shot: Number of samples per class
+        n_query: Number of test images per class
+        batch_size: Meta batch size
+        num_workers: Number of workers for data preprocessing
+        download: Download (and dataset specific preprocessing that needs to
+            be done on the downloaded files).
+        seed: Seed to be used in the meta-dataset
+
+    Returns:
+        A torchmeta :class:`BatchMetaDataLoader` object.
+    """
     dataset = mixedomniglottriplemnist(
         root,
         n_shot,
         k_way,
-        transform=Compose([Resize(input_size), ToTensor()]),
+        # TODO: Grayscale shouldn't be necessary
+        transform=Compose([Resize(input_size), Grayscale(1), ToTensor()]),
+        class_augmentations=[Rotation([90, 180, 270])],
         meta_split=meta_split,
         test_shots=n_query,
         download=download,
         seed=seed,
     )
+
     dataloader = BatchMetaDataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True
     )
@@ -390,6 +413,8 @@ class MiniImageNetFewShot(TorchmetaTaskDistribution):
 
 
 class MixedOmniglotTripleMNISTFewShot(TorchmetaTaskDistribution):
+    """Class to combine Omniglot and TripleMNIST based tasks for meta
+    learning"""
 
     def __init__(self, config, download=True):
         super().__init__(config, 1, 28, download)
@@ -399,8 +424,8 @@ class MixedOmniglotTripleMNISTFewShot(TorchmetaTaskDistribution):
             "train",
             self.k_way,
             self.n_shot_train,
-            self.input_size,
             self.n_query,
+            self.input_size,
             self.meta_batch_size_train,
             self.num_workers,
             self.download,
@@ -413,8 +438,8 @@ class MixedOmniglotTripleMNISTFewShot(TorchmetaTaskDistribution):
             "val",
             self.k_way,
             self.n_shot_test,
-            self.input_size,
             self.n_query,
+            self.input_size,
             self.meta_batch_size_test,
             self.num_workers,
             self.download,
@@ -427,8 +452,8 @@ class MixedOmniglotTripleMNISTFewShot(TorchmetaTaskDistribution):
             "test",
             self.k_way,
             self.n_shot_test,
-            self.input_size,
             self.n_query,
+            self.input_size,
             self.meta_batch_size_test,
             self.num_workers,
             self.download,

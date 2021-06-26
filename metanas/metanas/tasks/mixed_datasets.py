@@ -13,19 +13,12 @@ from torchmeta.datasets.utils import download_file_from_google_drive
 from torchmeta.transforms import Rotation
 from torchmeta.datasets.helpers import helper_with_default
 
-"""
-TODO: Move description to the class and adjust tripleMNIST descriptions
 
-This dataset combines the TripleMNIST and Omniglot dataset to yield a wider
-distribution. The omniglot dataset is format similarly to the TripleMNIST
-dataset. Hence, similar to the original implementation of:
-https://github.com/tristandeleu/pytorch-meta/blob/master/torchmeta/datasets/triplemnist.py
-"""
+def mixedomniglottriplemnist(folder, shots, ways, shuffle=True,
+                             test_shots=None, seed=None, **kwargs):
+    """Helper function to create a meta-dataset for the mixed Omniglot and
+    Triple MNIST dataset.
 
-
-def mixedomniglottriplemnist(folder, shots, ways, shuffle=True, test_shots=None,
-                             seed=None, **kwargs):
-    """Helper function to create a meta-dataset for the Triple MNIST dataset.
     Parameters
     ----------
     folder : string
@@ -48,27 +41,20 @@ def mixedomniglottriplemnist(folder, shots, ways, shuffle=True, test_shots=None,
         Additional arguments passed to the `TripleMNIST` class.
     See also
     --------
-    `datasets.triplemnist.TripleMNIST` : Meta-dataset for the Triple MNIST
-    dataset.
+    Meta-dataset for the mixed Omngilot and Triple MNIST dataset.
     """
-
-    defaults = {
-        'transform': Compose([Resize(28), ToTensor()]),
-        'class_augmentations': [Rotation([90, 180, 270])]
-    }
 
     return helper_with_default(MixedOmniglotTripleMNIST, folder, shots, ways,
                                shuffle=shuffle, test_shots=test_shots,
-                               seed=seed, defaults=defaults, **kwargs)
+                               seed=seed, **kwargs)
 
 
 class MixedOmniglotTripleMNIST(CombinationMetaDataset):
     """
-    The Triple MNIST dataset, introduced in [1]. This dataset is based on
-    the MNIST dataset [2]. It consists of sampled images from MNIST
-    that are put together to create images with multiple digits. It contains
-    1,000,000 images from 1000 different classes (1000 images per class, for
-    the numbers 000 to 999).
+    The Triple MNIST dataset, introduced in [1] and the Omniglot dataset, [3].
+    This dataset is sampled from the mixed distribution of Omniglot and
+    TripleMNIST. 
+
     Parameters
     ----------
     root : string
@@ -82,8 +68,8 @@ class MixedOmniglotTripleMNIST(CombinationMetaDataset):
         one of these three arguments must be set to `True`.
     meta_val : bool (default: `False`)
         Use the meta-validation split of the dataset. If set to `True`, then
-        the arguments `meta_train` and `meta_test` must be set to `False`. Exactly
-        one of these three arguments must be set to `True`.
+        the arguments `meta_train` and `meta_test` must be set to `False`.
+        Exactly one of these three arguments must be set to `True`.
     meta_test : bool (default: `False`)
         Use the meta-test split of the dataset. If set to `True`, then the
         arguments `meta_train` and `meta_val` must be set to `False`. Exactly
@@ -115,12 +101,28 @@ class MixedOmniglotTripleMNIST(CombinationMetaDataset):
     images (MNIST triple digits) from 1000 classes, for the numbers 000 to 999.
     The meta train/validation/test splits are 640/160/200 classes.
     The splits are taken from [1].
+
+    The second dataset is downloaded from the original [Omniglot repository]
+    (https://github.com/brendenlake/omniglot). The meta train/validation/test 
+    splits used in [5] are taken from [this repository]
+    (https://github.com/jakesnell/prototypical-networks). These splits are 
+    over 1028/172/423 classes (characters).
+
     References
     ----------
     .. [1] Sun, S. (2019). Multi-digit MNIST for Few-shot Learning.
     (https://github.com/shaohua0116/MultiDigitMNIST)
     .. [2] LeCun, Y., Cortes, C., and Burges, CJ. (2010). MNIST Handwritten
     Digit Database. (http://yann.lecun.com/exdb/mnist)
+    .. [3] Lake, B. M., Salakhutdinov, R., and Tenenbaum, J. B. (2015).
+    Human-level concept learning through probabilistic program induction.
+    Science, 350 (6266), 1332-1338
+    (http://www.sciencemag.org/content/350/6266/1332.short)
+    .. [4] Lake, B. M., Salakhutdinov, R., and Tenenbaum, J. B. (2019). The Omniglot 
+    Challenge: A 3-Year Progress Report (https://arxiv.org/abs/1902.03477)
+    .. [5] Vinyals, O., Blundell, C., Lillicrap, T. and Wierstra, D. (2016).
+    Matching Networks for One Shot Learning. In Advances in Neural
+    Information Processing Systems (pp. 3630-3638) (https://arxiv.org/abs/1606.04080)
     """
 
     def __init__(self, root, num_classes_per_task=None, meta_train=False,
