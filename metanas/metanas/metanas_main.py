@@ -142,7 +142,7 @@ def meta_architecture_search(
     train_info = dict()  # this is added to the experiment.pickle
 
     if not config.eval:
-        config, meta_model, train_info = train(
+        config, meta_model, task_optimizer, train_info = train(
             config,
             meta_model,
             task_distribution,
@@ -465,16 +465,14 @@ def train(
                              np.exp(-
                                     (meta_epoch - config.warm_up_epochs *
                                      scale_factor)))
-        # This is now done in the DARTS.step()
-        # meta_model.drop_out_skip_connections(dropout_rate)
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
-        prev_stage = int((meta_epoch-1) // (config.meta_epochs /
+        prev_stage = int((meta_epoch-2) // (config.meta_epochs /
                                             config.architecture_stages))
-        if current_stage > prev_stage and current_stage != 0:
 
-            config.logger.info(f"entered new stage: {current_stage}")
+        if current_stage > prev_stage and current_stage != 0:
+            config.logger.info(f"P-DARTS: Entered new stage: {current_stage}")
 
             # We increase the depth of the super-network by stacking more
             # cells, i.e., L_k > L_k−1
@@ -488,6 +486,10 @@ def train(
             # |O^k_(i,j)| = O_k > O_k-1
             config.switches_normal, config.switches_reduce = \
                 meta_model.reduce_operations(config, current_stage+1)
+
+            n_ops = sum(list(map(int, config.switches_normal[0])))
+            config.logger.info(
+                f"P-DARTS: Config number of n_ops enabled = {n_ops}")
 
             # TODO: Possibly keep the meta-weights here instead of re-init?
             meta_model = _build_model(config, task_distribution, normalizer,
@@ -506,12 +508,14 @@ def train(
 
             # Set the dropout rate for skip-connections,
             dropout_rate = dropout_current_stage
-            # meta_model.drop_out_skip_connections(dropout_rate)
 
             config.logger.info(
-                f"dropout ops = {config.dropout_operations[current_stage]}")
-            config.logger.info(f"switches normal = {config.switches_normal}")
-            config.logger.info(f"switches reduce = {config.switches_reduce}")
+                "P-DARTS: dropout p operations = "
+                f"{config.dropout_operations[current_stage]}")
+            config.logger.info(
+                f"P-DARTS: switches normal = {config.switches_normal}")
+            config.logger.info(
+                f"P-DARTS: switches reduce = {config.switches_reduce}")
         ####
 
         # Each task starts with the current meta state
@@ -578,10 +582,12 @@ def train(
                 copy.deepcopy(task_optimizer.a_optim.state_dict()),
             ]
 
-            global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
+            global_progress = f"[Meta-Epoch "
+            "{meta_epoch:2d}/{config.meta_epochs}]"
             task_infos = []
 
-            # P-Darts, limit the skip connections in the last stage
+            # P-DARTS, limit the skip connections in the last stage
+            # +1 to adjust for the index
             last_stage = current_stage+1 == config.architecture_stages
 
             for task in meta_test_batch:
@@ -690,7 +696,7 @@ def train(
     pickle_to_file(experiment, os.path.join(config.path, "experiment.pickle"))
     pickle_to_file(config, os.path.join(config.path, "config.pickle"))
 
-    return config, meta_model, train_info
+    return config, meta_model, task_optimizer, train_info
 
 
 def pickle_to_file(var, file_path):
