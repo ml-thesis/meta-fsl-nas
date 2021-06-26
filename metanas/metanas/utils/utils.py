@@ -1,3 +1,16 @@
+
+import datetime
+import fcntl
+import time
+import logging
+import os
+import shutil
+import tempfile
+from collections import OrderedDict
+import numpy as np
+import torch
+import torch.nn as nn
+
 """ Utilities 
 Copyright (c) 2021 Robert Bosch GmbH
 
@@ -21,19 +34,6 @@ cf. 3rd-party-licenses.txt in root directory.
 """
 
 
-
-
-import datetime
-import fcntl
-import time
-import logging
-import os
-import shutil
-import tempfile
-from collections import OrderedDict
-import numpy as np
-import torch
-import torch.nn as nn
 def set_hyperparameter(config):
     """Load/set hyperparameter settings based on predefined config"""
 
@@ -71,7 +71,7 @@ def set_hyperparameter(config):
     elif config.hp_setting == "og_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
         config.n_train = 15
-        config.batch_size = 30  # P-DARTS uses batch_size 96?
+        config.batch_size = 20  # P-DARTS uses batch_size 96?
         config.batch_size_test = 10
         config.meta_batch_size = 10
         config.w_lr = 0.0006
@@ -233,7 +233,8 @@ class EMAMeter:
 
     Attributes:
         avg: The current EMA
-        alpha: The degree of weight decrease (a higher alpha discounts older observations faster)
+        alpha: The degree of weight decrease (a higher alpha discounts older
+            observations faster)
     """
 
     def __init__(self, alpha=0.01):

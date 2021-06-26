@@ -60,6 +60,21 @@ def meta_architecture_search(
     # https://discuss.pytorch.org/t/what-does-torch-backends-cudnn-benchmark-do/5936
     torch.backends.cudnn.benchmark = True
 
+    # hyperparameter settings
+    if config.use_hp_setting:
+        config = utils.set_hyperparameter(config)
+    else:
+        print("Not using hp_setting.")
+
+    if config.use_torchmeta_loader:
+        from metanas.tasks.torchmeta_loader import (
+            OmniglotFewShot,
+            MiniImageNetFewShot as miniImageNetFewShot,
+            MixedOmniglotTripleMNISTFewShot
+        )
+    else:
+        raise RuntimeError("Other data loaders deprecated.")
+
     # P-DARTS
     # Set these to be able to re-init them,
     config.task_optimizer_cls = task_optimizer_cls
@@ -76,28 +91,12 @@ def meta_architecture_search(
     config.switches_normal, config.switches_reduce = init_switches(
         config.edges)
 
-    # hyperparameter settings
-    if config.use_hp_setting:
-        config = utils.set_hyperparameter(config)
-    else:
-        print("Not using hp_setting.")
-
-    if config.use_torchmeta_loader:
-        from metanas.tasks.torchmeta_loader import (
-            OmniglotFewShot,
-            MiniImageNetFewShot as miniImageNetFewShot,
-            MixedOmniglotTripleMNISTFewShot
-        )
-    else:
-        raise RuntimeError("Other data loaders deprecated.")
-
     if config.dataset == "omniglot":
         task_distribution_class = OmniglotFewShot
     elif config.dataset == "miniimagenet":
         task_distribution_class = miniImageNetFewShot
     elif config.dataset == "mixedomniglottriplemnist":
         task_distribution_class = MixedOmniglotTripleMNISTFewShot
-
     else:
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
