@@ -7,7 +7,7 @@ from torchmeta.utils.data import BatchMetaDataLoader
 from torchmeta.datasets.helpers import miniimagenet
 
 from metanas.tasks.core import TaskDistribution, Task
-from metanas.tasks.mixed_omniglot_triplemnist import mixedomniglottriplemnist
+from metanas.tasks.mixed_datasets import mixedomniglottriplemnist
 
 
 """Task distribution using tochmeta

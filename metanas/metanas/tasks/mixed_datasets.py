@@ -103,9 +103,9 @@ class MixedOmniglotTripleMNIST(CombinationMetaDataset):
     The splits are taken from [1].
 
     The second dataset is downloaded from the original [Omniglot repository]
-    (https://github.com/brendenlake/omniglot). The meta train/validation/test 
+    (https://github.com/brendenlake/omniglot). The meta train/validation/test
     splits used in [5] are taken from [this repository]
-    (https://github.com/jakesnell/prototypical-networks). These splits are 
+    (https://github.com/jakesnell/prototypical-networks). These splits are
     over 1028/172/423 classes (characters).
 
     References
@@ -122,7 +122,8 @@ class MixedOmniglotTripleMNIST(CombinationMetaDataset):
     Challenge: A 3-Year Progress Report (https://arxiv.org/abs/1902.03477)
     .. [5] Vinyals, O., Blundell, C., Lillicrap, T. and Wierstra, D. (2016).
     Matching Networks for One Shot Learning. In Advances in Neural
-    Information Processing Systems (pp. 3630-3638) (https://arxiv.org/abs/1606.04080)
+    Information Processing Systems (pp. 3630-3638)
+    (https://arxiv.org/abs/1606.04080)
     """
 
     def __init__(self, root, num_classes_per_task=None, meta_train=False,
