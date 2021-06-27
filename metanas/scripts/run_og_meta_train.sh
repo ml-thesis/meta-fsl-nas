@@ -28,11 +28,12 @@ args=(
     # test examples per class
     --q 1 \
 
+    # Originally, 0.01 for 30_000 epochs
     --meta_model_prune_threshold 0.001 \
     --alpha_prune_threshold 0.001 \
     # Meta Learning
-    # Original settings 30_000 meta epochs
-    # warm_up_epochs 15_000
+    # Originally, 30_000 meta epochs
+    # and 15_000 warm_up_epochs
     --meta_model searchcnn \
     --meta_epochs 18 \
     --warm_up_epochs 3 \
@@ -46,7 +47,7 @@ args=(
     --normalizer_temp_anneal_mode linear \
     --normalizer_t_min 0.05 \
     --normalizer_t_max 1.0 \
-    # In P-DARTS 0.3 is used in metaNAS 0.2
+    # P-DARTS 0.3, metaNAS 0.2
     --drop_path_prob 0.3 \
 
     # Architectures

@@ -325,7 +325,9 @@ def parse_switches(alpha, switches, k, primitives=PRIMITIVES_FEWSHOT):
 def limit_skip_connections(alphas, switches, num_of_sk=2, nodes=3,
                            k=2, primitives=PRIMITIVES_FEWSHOT):
     sk_idx = primitives.index("skip_connect")
-    alpha_concat = np.concatenate(alphas, axis=0)
+
+    alphas_np = [a.cpu().detach().numpy() for a in alphas]
+    alpha_concat = np.concatenate(alphas_np, axis=0)
 
     # skip-connections alpha indices
     # edge index, skip-connection alpha_index
@@ -378,10 +380,12 @@ def limit_skip_connections(alphas, switches, num_of_sk=2, nodes=3,
             return gene
 
 
-def limit_skip_connections(alphas, alphas_pairwise, switches, num_of_sk=2,
-                           nodes=3, primitives=PRIMITIVES_FEWSHOT):
+def limit_skip_connections_pw(alphas, alphas_pairwise, switches, num_of_sk=2,
+                              nodes=3, primitives=PRIMITIVES_FEWSHOT):
     sk_idx = primitives.index("skip_connect")
-    alpha_concat = np.concatenate(alphas, axis=0)
+
+    alphas_np = [a.cpu().detach().numpy() for a in alphas]
+    alpha_concat = np.concatenate(alphas_np, axis=0)
 
     # skip-connections alpha indices
     # edge index, skip-connection alpha_index
@@ -431,7 +435,6 @@ def limit_skip_connections(alphas, alphas_pairwise, switches, num_of_sk=2,
                               for op in edge if op[0] == "skip_connect"])
 
         if num_sk_enabled <= num_of_sk:
-            # return the new switches?
             return gene
 
 

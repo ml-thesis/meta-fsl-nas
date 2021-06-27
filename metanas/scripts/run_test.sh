@@ -1,47 +1,48 @@
 #!/bin/bash
 
-DATASET=omniglot
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/metanas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results
+DATASET=mixedomniglottriplemnist #omniglot
+DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/custom/results/og_short
 		
 mkdir -p $TRAIN_DIR
-
-MODEL_PATH=/path/to/checkpoint/from/metatrain
 
 
 args=(
     # Execution
-    --name metatest_og \
+    --name metatrain_og \
     --job_id 0 \
     --path ${TRAIN_DIR} \
     --data_path ${DATASET_DIR} \
     --dataset $DATASET
-    --hp_setting 'og_metanas' \
+    --hp_setting 'og_test' \
     --use_hp_setting 1 \
     --workers 0 \
     --gpus 0 \
-    --test_adapt_steps 0.5 \
-    --test_task_train_steps 100 \
-    --eval \
+    --test_adapt_steps 1.0 \
+
     # few shot params
      # examples per class
-    --n 1 \
+    --n 5 \
     # number classes  
     --k 20 \
     # test examples per class
     --q 1 \
 
-    --meta_model_prune_threshold 0.01 \
-    --alpha_prune_threshold 0.05 \
+    --meta_model_prune_threshold 0.001 \
+    --alpha_prune_threshold 0.001 \
     # Meta Learning
+    # Original settings 30_000 meta epochs
+    # and warm_up_epochs 15_000.
     --meta_model searchcnn \
-    --model_path ${MODEL_PATH}
-    --meta_epochs 30000 \
-    --warm_up_epochs 15000 \
-    --use_pairwise_input_alphas \
-    --eval_freq 2500 \
-    --eval_epochs 200 \
+    --meta_epochs 4 \
+    --test_task_train_steps 2 \
 
+    --warm_up_epochs 1 \
+    --use_pairwise_input_alphas \
+    # --eval_freq 2500 \
+    --eval_freq 6 \
+    # --eval_epochs 200 \
+    --eval_epochs 1 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \
@@ -52,6 +53,7 @@ args=(
     # Architectures
     --init_channels 28 \
     --layers 4 \
+    --nodes 3 \
     --reduction_layers 1 3 \
     --use_first_order_darts \
 

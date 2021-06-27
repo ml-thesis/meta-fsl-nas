@@ -127,8 +127,6 @@ class SearchCNNController(nn.Module):
 
         # P-DARTS, checks how many ops to enable
         n_ops = sum(list(map(int, switches_normal[0])))
-        self.n_ops = n_ops
-        print("P-DARTS: Config number of n_ops enabled, ", n_ops)
 
         # UNAS adjustments to sample alphas by REINFORCE gradient
         # estimator
@@ -273,10 +271,12 @@ class SearchCNNController(nn.Module):
         weights_normal = np.concatenate(weights_normal, axis=0)
         weights_reduce = np.concatenate(weights_reduce, axis=0)
 
-        switches_reduce = self._adjust_switches(weights_normal, switches_reduce,
+        switches_reduce = self._adjust_switches(weights_normal,
+                                                switches_reduce,
                                                 ops_drop, config.edges)
 
-        switches_normal = self._adjust_switches(weights_reduce, switches_normal,
+        switches_normal = self._adjust_switches(weights_reduce,
+                                                switches_normal,
                                                 ops_drop, config.edges)
         return switches_normal, switches_reduce
 
@@ -666,7 +666,7 @@ class SearchCNNController(nn.Module):
 
             # Limiting the skip connections, only applies to the normal cell.
             if limit_skip_connections is not None:
-                gene_normal = gt.limit_skip_connections(
+                gene_normal = gt.limit_skip_connections_pw(
                     self.alpha_normal, weights_pw_normal, switches_normal,
                     num_of_sk=limit_skip_connections,
                     nodes=self.n_nodes,

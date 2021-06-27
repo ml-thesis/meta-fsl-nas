@@ -1,18 +1,20 @@
 
-
-
-
-import datetime
-import fcntl
-import time
-import logging
-import os
-import shutil
-import tempfile
-from collections import OrderedDict
-import numpy as np
-import torch
 import torch.nn as nn
+import torch
+import numpy as np
+from collections import OrderedDict
+import tempfile
+import shutil
+import os
+import logging
+import time
+import fcntl
+import datetime
+<< << << < HEAD
+
+
+== == == =
+>>>>>> > pdarts
 
 """ Utilities 
 Copyright (c) 2021 Robert Bosch GmbH
@@ -36,8 +38,25 @@ which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
 """
 
+
 def set_hyperparameter(config):
     """Load/set hyperparameter settings based on predefined config"""
+
+    # Default P-DARTS settings
+    # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
+    # DARTS in the initial stage.
+    config.architecture_stages = 3
+
+    # The number of operations preserved on each edge of the super-network are,
+    # 8, 5, and 3 for stage 1, 2 and 3, respectively.
+    config.drop_number_operations = [2, 3, 2]
+
+    # Dropout rate on the operations
+    config.dropout_operations = [0, 0.3, 0.6]
+
+    # Meanwhile, we increase the number of initial channels from
+    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
+    config.init_channels_stages = [16, 28, 40]
 
     if config.hp_setting == "in_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
@@ -57,7 +76,7 @@ def set_hyperparameter(config):
     elif config.hp_setting == "og_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
         config.n_train = 15
-        config.batch_size = 30  # P-DARTS uses batch_size 96?
+        config.batch_size = 20  # P-DARTS uses batch_size 96?
         config.batch_size_test = 10
         config.meta_batch_size = 10
         config.w_lr = 0.0006
@@ -219,7 +238,8 @@ class EMAMeter:
 
     Attributes:
         avg: The current EMA
-        alpha: The degree of weight decrease (a higher alpha discounts older observations faster)
+        alpha: The degree of weight decrease (a higher alpha discounts older
+            observations faster)
     """
 
     def __init__(self, alpha=0.01):

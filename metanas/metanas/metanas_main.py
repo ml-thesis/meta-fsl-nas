@@ -45,71 +45,6 @@ def meta_architecture_search(
 ):
     config.logger.info("Start meta architecture search")
 
-    ####
-    # P-DARTS
-    # TODO: Move these configurations to argparse
-    # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
-    # DARTS in the initial stage.
-    config.architecture_stages = 3
-
-    # The number of operations preserved on each edge of the super-network are,
-    # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    # TODO: Set to 0 to comply with UNAS changes.
-    # config.drop_number_operations = [2, 3, 2]
-    config.drop_number_operations = [0, 0, 0]
-
-    # Each stage, the super-network is trained for 25 epochs (batch size 96).
-    # Warm-start/only tuning network parameters in first 10 epochs.
-    # Finally, the number of normal cells in the network increases in these
-    # three stages, to 5, 11, 17, respectively.
-    config.add_layers = 2
-
-    # Set these to be able to re-init them,
-    config.task_optimizer_cls = task_optimizer_cls
-    config.meta_optimizer_cls = meta_optimizer_cls
-
-    # Dropout rate on the operations
-    config.dropout_operations = [0, 0.3, 0.6]
-
-    # Meanwhile, we increase the number of initial channels from
-    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
-    config.init_channels_stages = [16, 28, 40]
-
-    # Start off with the first stage,
-    config.initial_channels = config.init_channels_stages[0]
-
-    # Discovered cells are allowed to keep M=2, skip connections.
-    # Use these for my experiment, M = 2
-    config.limit_skip_connections = None
-
-    # Initialize the variables for Search Space Approximation,
-    # Original P-DARTS, There are 4 intermediate nodes in a cell,
-    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-    # number of edges in a cell.
-    config.edges = sum(i for i in range(2, config.nodes+2))
-    config.switches_normal, config.switches_reduce = init_switches(
-        config.edges)
-
-    # UNAS variables
-    config.cutout = False
-
-    # Alpha loss
-    config.alpha_loss = False
-    config.alpha_loss_iter = 5000
-    config.alpha_loss_lambda = 0.2
-
-    # Generalization error
-    config.gen_error_alpha = True
-    # Coefficient to combine train/val loss with generalization error loss
-    config.gen_error_alpha_lambda = 0.5
-
-    # Gumbel options
-    config.same_alpha_minibatch = False
-    config.gumbel_soft_temperature = 0.4
-    config.gumbel_softmax_method = 'REINFORCE' # TODO: Add rebar and latency loss
-    config.gumbel_soften_epsilon = 0.0
-    ####
-
     # Find mistakes in gradient computation
     torch.autograd.set_detect_anomaly(True)
 
@@ -137,19 +72,39 @@ def meta_architecture_search(
         from metanas.tasks.torchmeta_loader import (
             OmniglotFewShot,
             MiniImageNetFewShot as miniImageNetFewShot,
+            MixedOmniglotTripleMNISTFewShot
         )
     else:
-        raise RuntimeError(f"Other data loaders deprecated.")
+        raise RuntimeError("Other data loaders deprecated.")
+
+    # P-DARTS
+    # Set these to be able to re-init them,
+    config.task_optimizer_cls = task_optimizer_cls
+    config.meta_optimizer_cls = meta_optimizer_cls
+
+    # Start off with the first stage,
+    config.initial_channels = config.init_channels_stages[0]
+
+    # Initialize the variables for Search Space Approximation,
+    # Original P-DARTS, There are 4 intermediate nodes in a cell,
+    # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+    # number of edges in a cell.
+    config.edges = sum(i for i in range(2, config.nodes+2))
+    config.switches_normal, config.switches_reduce = init_switches(
+        config.edges)
 
     if config.dataset == "omniglot":
         task_distribution_class = OmniglotFewShot
     elif config.dataset == "miniimagenet":
         task_distribution_class = miniImageNetFewShot
+    elif config.dataset == "mixedomniglottriplemnist":
+        task_distribution_class = MixedOmniglotTripleMNISTFewShot
     else:
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
     # task distribution
-    # TODO: Adjusted to download=True, to force the download configure this
+    # Adjusted to download=True, to force the download, this doesn't
+    # do any harm as the download will never retrigger.
     task_distribution = task_distribution_class(config, download=True)
 
     # meta model
@@ -189,7 +144,7 @@ def meta_architecture_search(
     train_info = dict()  # this is added to the experiment.pickle
 
     if not config.eval:
-        config, meta_model, train_info = train(
+        config, meta_model, task_optimizer, train_info = train(
             config,
             meta_model,
             task_distribution,
@@ -512,16 +467,14 @@ def train(
                              np.exp(-
                                     (meta_epoch - config.warm_up_epochs *
                                      scale_factor)))
-        # This is now done in the DARTS.step()
-        # meta_model.drop_out_skip_connections(dropout_rate)
 
         # When we enter a new stage, G_k, we reinitialize the weights
         # and architecture parameters as we've just removed an operation o_i
-        prev_stage = int((meta_epoch-1) // (config.meta_epochs /
+        prev_stage = int((meta_epoch-2) // (config.meta_epochs /
                                             config.architecture_stages))
-        if current_stage > prev_stage and current_stage != 0:
 
-            config.logger.info(f"entered new stage: {current_stage}")
+        if current_stage > prev_stage and current_stage != 0:
+            config.logger.info(f"P-DARTS: Entered new stage: {current_stage}")
 
             # We increase the depth of the super-network by stacking more
             # cells, i.e., L_k > L_k−1
@@ -535,6 +488,10 @@ def train(
             # |O^k_(i,j)| = O_k > O_k-1
             config.switches_normal, config.switches_reduce = \
                 meta_model.reduce_operations(config, current_stage+1)
+
+            n_ops = sum(list(map(int, config.switches_normal[0])))
+            config.logger.info(
+                f"P-DARTS: Config number of n_ops enabled = {n_ops}")
 
             # TODO: Possibly keep the meta-weights here instead of re-init?
             meta_model = _build_model(config, task_distribution, normalizer,
@@ -555,9 +512,12 @@ def train(
             dropout_rate = dropout_current_stage
 
             config.logger.info(
-                f"dropout ops = {config.dropout_operations[current_stage]}")
-            config.logger.info(f"switches normal = {config.switches_normal}")
-            config.logger.info(f"switches reduce = {config.switches_reduce}")
+                "P-DARTS: dropout p operations = "
+                f"{config.dropout_operations[current_stage]}")
+            config.logger.info(
+                f"P-DARTS: switches normal = {config.switches_normal}")
+            config.logger.info(
+                f"P-DARTS: switches reduce = {config.switches_reduce}")
         ####
 
         # Each task starts with the current meta state
@@ -624,10 +584,12 @@ def train(
                 copy.deepcopy(task_optimizer.a_optim.state_dict()),
             ]
 
-            global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
+            global_progress = f"[Meta-Epoch "
+            "{meta_epoch:2d}/{config.meta_epochs}]"
             task_infos = []
 
-            # P-Darts, limit the skip connections in the last stage
+            # P-DARTS, limit the skip connections in the last stage
+            # +1 to adjust for the index
             last_stage = current_stage+1 == config.architecture_stages
 
             for task in meta_test_batch:
@@ -736,7 +698,7 @@ def train(
     pickle_to_file(experiment, os.path.join(config.path, "experiment.pickle"))
     pickle_to_file(config, os.path.join(config.path, "config.pickle"))
 
-    return config, meta_model, train_info
+    return config, meta_model, task_optimizer, train_info
 
 
 def pickle_to_file(var, file_path):
@@ -1069,6 +1031,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to use drop path also during meta testing.",
     )
+
+    # P-DARTS
+    # Each stage, the super-network is trained for 25 epochs (batch size 96).
+    # Warm-start/only tuning network parameters in first 10 epochs.
+    # Finally, the number of normal cells in the network increases in these
+    # three stages, to 5, 11, 17, respectively.
+    parser.add_argument("--add_layers", type=int, default=2)
+
+    # Discovered cells are allowed to keep M=2, skip connections.
+    # Use these for my experiment, M = 2
+    parser.add_argument("--limit_skip_connections", type=int, default=2)
 
     # Architectures
     parser.add_argument("--init_channels", type=int, default=16)
