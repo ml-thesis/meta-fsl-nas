@@ -10,11 +10,6 @@ import logging
 import time
 import fcntl
 import datetime
-<< << << < HEAD
-
-
-== == == =
->>>>>> > pdarts
 
 """ Utilities 
 Copyright (c) 2021 Robert Bosch GmbH
