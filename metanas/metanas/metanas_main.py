@@ -91,6 +91,11 @@ def meta_architecture_search(
     config.switches_normal, config.switches_reduce = init_switches(
         config.edges)
 
+    # If Search Space Regularization is disabled, we don't limit
+    # skip-connections.
+    if not config.use_search_space_regularization:
+        config.limit_skip_connections = None
+
     if config.dataset == "omniglot":
         task_distribution_class = OmniglotFewShot
     elif config.dataset == "miniimagenet":
@@ -476,7 +481,8 @@ def train(
 
             # We increase the depth of the super-network by stacking more
             # cells, i.e., L_k > L_k−1
-            config.layers += config.add_layers
+            if config.use_search_space_approximation:
+                config.layers += config.add_layers
 
             # Increase initial channels
             config.initial_channels = \
@@ -484,8 +490,9 @@ def train(
 
             # We reduce the operation space of O_k candidate operations, i.e.
             # |O^k_(i,j)| = O_k > O_k-1
-            config.switches_normal, config.switches_reduce = \
-                meta_model.reduce_operations(config, current_stage+1)
+            if config.use_search_space_approximation:
+                config.switches_normal, config.switches_reduce = \
+                    meta_model.reduce_operations(config, current_stage+1)
 
             n_ops = sum(list(map(int, config.switches_normal[0])))
             config.logger.info(
@@ -517,6 +524,9 @@ def train(
             config.logger.info(
                 f"P-DARTS: switches reduce = {config.switches_reduce}")
         ####
+
+        if not config.use_search_space_regularization:
+            dropout_rate = 0.0
 
         # Each task starts with the current meta state
         meta_state = copy.deepcopy(meta_model.state_dict())
@@ -1036,9 +1046,21 @@ if __name__ == "__main__":
     # three stages, to 5, 11, 17, respectively.
     parser.add_argument("--add_layers", type=int, default=2)
 
-    # Discovered cells are allowed to keep M=2, skip connections.
-    # Use these for my experiment, M = 2
+    # Discovered cells are allowed to keep M = 2, skip connections.
     parser.add_argument("--limit_skip_connections", type=int, default=2)
+
+    # Enabling both approaches, specificly for ablation study
+    parser.add_argument(
+        "--use_search_space_approximation",
+        action="store_true",
+        help="Whether to enable P-DARTS, search space approximation",
+    )
+
+    parser.add_argument(
+        "--use_search_space_regularization",
+        action="store_true",
+        help="Whether to enable P-DARTS, search space regularization",
+    )
 
     # Architectures
     parser.add_argument("--init_channels", type=int, default=16)

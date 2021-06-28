@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-""" Utilities 
+""" Utilities
 Copyright (c) 2021 Robert Bosch GmbH
 
 This program is free software: you can redistribute it and/or modify
@@ -27,7 +27,7 @@ GNU Affero General Public License for more details.
 """
 
 
-""" 
+"""
 Based on https://github.com/khanrc/pt.darts
 which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
