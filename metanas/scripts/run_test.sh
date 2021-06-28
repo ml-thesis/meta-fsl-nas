@@ -2,19 +2,19 @@
 
 DATASET=mixedomniglottriplemnist #omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/custom/results/og_short
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/test_exp
 		
 mkdir -p $TRAIN_DIR
 
 
 args=(
     # Execution
-    --name metatrain_og \
+    --name test_exp \
     --job_id 0 \
     --path ${TRAIN_DIR} \
     --data_path ${DATASET_DIR} \
     --dataset $DATASET
-    --hp_setting 'og_test' \
+    --hp_setting 'test_exp' \
     --use_hp_setting 1 \
     --workers 0 \
     --gpus 0 \

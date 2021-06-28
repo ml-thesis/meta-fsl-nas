@@ -70,6 +70,7 @@ def meta_architecture_search(
         from metanas.tasks.torchmeta_loader import (
             OmniglotFewShot,
             MiniImageNetFewShot as miniImageNetFewShot,
+            TripleMNISTFewShot,
             MixedOmniglotTripleMNISTFewShot
         )
     else:
@@ -100,6 +101,8 @@ def meta_architecture_search(
         task_distribution_class = OmniglotFewShot
     elif config.dataset == "miniimagenet":
         task_distribution_class = miniImageNetFewShot
+    elif config.dataset == "triplemnist":
+        task_distribution_class = TripleMNISTFewShot
     elif config.dataset == "mixedomniglottriplemnist":
         task_distribution_class = MixedOmniglotTripleMNISTFewShot
     else:
