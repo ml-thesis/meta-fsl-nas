@@ -42,6 +42,8 @@ args=(
     --eval_freq 2500 \
     --eval_epochs 200 \
 
+    --use_search_space_approximation
+    --use_search_space_regularization
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \

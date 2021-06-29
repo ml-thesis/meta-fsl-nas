@@ -4,7 +4,7 @@ from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
 from torchvision.transforms import Compose, Resize, ToTensor, Grayscale
 from torchmeta.utils.data import BatchMetaDataLoader
-from torchmeta.datasets.helpers import miniimagenet
+from torchmeta.datasets.helpers import miniimagenet, triplemnist
 
 from metanas.tasks.core import TaskDistribution, Task
 from metanas.tasks.mixed_datasets import mixedomniglottriplemnist
@@ -164,6 +164,53 @@ def create_miniimagenet_data_loader(
     return dataloader
 
 
+def create_triplemnist_data_loader(
+    root,
+    meta_split,
+    k_way,
+    n_shot,
+    n_query,
+    input_size,
+    batch_size,
+    num_workers,
+    download=False,
+    seed=None,
+):
+    """Create a torchmeta BatchMetaDataLoader for tripleMNIST
+
+    Args:
+        root: Path to tripleMNIST root folder (containing an
+            'mixedomniglottriplemnist'` subfolder with the preprocess
+            json-Files or downloaded tar.gz-file).
+        meta_split: see torchmeta.datasets.TripleMNIST
+        k_way: Number of classes per task
+        n_shot: Number of samples per class
+        n_query: Number of test images per class
+        batch_size: Meta batch size
+        num_workers: Number of workers for data preprocessing
+        download: Download (and dataset specific preprocessing that needs to
+            be done on the downloaded files).
+        seed: Seed to be used in the meta-dataset
+
+    Returns:
+        A torchmeta :class:`BatchMetaDataLoader` object.
+    """
+    dataset = triplemnist(
+        root,
+        n_shot,
+        k_way,
+        meta_split=meta_split,
+        test_shots=n_query,
+        download=download,
+        seed=seed,
+    )
+
+    dataloader = BatchMetaDataLoader(
+        dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True
+    )
+    return dataloader
+
+
 def create_mixed_omniglot_triplemnist_data_loader(
     root,
     meta_split,
@@ -195,6 +242,7 @@ def create_mixed_omniglot_triplemnist_data_loader(
     Returns:
         A torchmeta :class:`BatchMetaDataLoader` object.
     """
+    # TODO: Still contains a bug in downloading labels.json
     dataset = mixedomniglottriplemnist(
         root,
         n_shot,
@@ -454,6 +502,73 @@ class MixedOmniglotTripleMNISTFewShot(TorchmetaTaskDistribution):
             self.n_shot_test,
             self.n_query,
             self.input_size,
+            self.meta_batch_size_test,
+            self.num_workers,
+            self.download,
+            seed=self.seed,
+        )
+        self.test_it = iter(self.test_loader)
+
+        self.train_sampler = None
+        if self.task_batch_size != self.n_shot_train * self.k_way:
+            self.train_sampler = RandomSampler(
+                range(self.n_shot_train * self.k_way),
+                replacement=True,
+                num_samples=self.task_batch_size,
+            )
+
+        self.test_sampler = None
+        if self.task_batch_size_test != self.n_shot_test * self.k_way:
+            self.val_sampler = RandomSampler(
+                range(self.n_shot_test * self.k_way),
+                replacement=True,
+                num_samples=self.task_batch_size_test,
+            )
+            self.test_sampler = RandomSampler(
+                range(self.n_shot_test * self.k_way),
+                replacement=True,
+                num_samples=self.task_batch_size_test,
+            )
+
+
+class TripleMNISTFewShot(TorchmetaTaskDistribution):
+    """Class to create triple MNIST-based tasks for meta learning"""
+
+    def __init__(self, config, download=False):
+        super().__init__(config, 3, 84, download)
+
+        self.train_loader = create_triplemnist_data_loader(
+            self.data_path,
+            "train",
+            self.k_way,
+            self.n_shot_train,
+            self.n_query,
+            self.meta_batch_size_train,
+            self.num_workers,
+            self.download,
+            seed=self.seed,
+        )
+        self.train_it = iter(self.train_loader)
+
+        self.val_loader = create_triplemnist_data_loader(
+            self.data_path,
+            "val",
+            self.k_way,
+            self.n_shot_test,
+            self.n_query,
+            self.meta_batch_size_test,
+            self.num_workers,
+            self.download,
+            seed=self.seed,
+        )
+        self.val_it = iter(self.val_loader)
+
+        self.test_loader = create_triplemnist_data_loader(
+            self.data_path,
+            "test",
+            self.k_way,
+            self.n_shot_test,
+            self.n_query,
             self.meta_batch_size_test,
             self.num_workers,
             self.download,
