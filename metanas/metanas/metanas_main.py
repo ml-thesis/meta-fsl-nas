@@ -138,6 +138,12 @@ def meta_architecture_search(
 
     config.logger.info(
         f"alpha initial = {[alpha for alpha in meta_model.alphas()]} ")
+    config.logger.info(
+        f"Using Search Space Approximation = {config.use_search_space_approximation}"
+    )
+    config.logger.info(
+        f"Using Search Space Regularization = {config.use_search_space_regularization}"
+    )
 
     utils.print_config_params(config, config.logger.info)
 
@@ -484,7 +490,7 @@ def train(
             config.logger.info(
                 "P-DARTS: dropout p operations = "
                 f"{config.dropout_ops[current_stage]}")
-            # TODO: Clutters the logging
+            # Commented due to cluttering the logging
             # config.logger.info(
             #     f"P-DARTS: switches normal = {config.switches_normal}")
             # config.logger.info(

@@ -83,12 +83,11 @@ def set_hyperparameter(config):
     elif config.hp_setting == "og_pdarts":
         config.task_train_steps = 5
         config.n_train = 15
-        config.batch_size = 20
+        config.batch_size = 40
         config.batch_size_test = 10
         config.meta_batch_size = 10
-        # Adjusted learning rate, to PDARTS numbers
-        config.w_lr = 0.0006
-        config.alpha_lr = 0.0006
+        config.w_lr = 0.005
+        config.alpha_lr = 0.005
         config.w_meta_lr = 1.0
         config.a_meta_lr = 0.6
         config.a_meta_anneal = 0

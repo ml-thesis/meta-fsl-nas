@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DATASET=omniglot
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/metanas/data
+DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_test
 		
 mkdir -p $TRAIN_DIR
