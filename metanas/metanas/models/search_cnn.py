@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from torch.nn.parallel._functions import Broadcast
 import scipy.special
 import copy
@@ -124,18 +125,21 @@ class SearchCNNController(nn.Module):
             PRIMITIVES = gt.PRIMITIVES
         self.primitives = PRIMITIVES
 
-        # checks how many ops to enable
+        # P-DARTS, checks how many ops to enable
         n_ops = sum(list(map(int, switches_normal[0])))
 
+        # UNAS adjustments to sample alphas by REINFORCE gradient
+        # estimator
         self.alpha_normal = nn.ParameterList()
         self.alpha_reduce = nn.ParameterList()
 
         for i in range(n_nodes):
-            # create alpha parameters over parallel operations
+            # create alpha parameters over parallel operations,
+            # note the requires_grad
             self.alpha_normal.append(nn.Parameter(
-                1e-3 * torch.randn(i + 2, n_ops)))
+                1e-3 * torch.randn(i + 2, n_ops, requires_grad=True)))
             self.alpha_reduce.append(nn.Parameter(
-                1e-3 * torch.randn(i + 2, n_ops)))
+                1e-3 * torch.randn(i + 2, n_ops, requires_grad=True)))
 
         assert not (
             use_hierarchical_alphas and use_pairwise_input_alphas
@@ -230,9 +234,25 @@ class SearchCNNController(nn.Module):
             weights_pw_reduce,
         )
 
+    def discretize_alphas(self, alphas):
+        """Return the discrete/normalized alphas and the
+        raw alphas for UNAS"""
+        alphas = [self.apply_normalizer(alpha) for alpha in alphas]
+        return alphas
+
+    def set_alphas(self, alpha_normal, alpha_reduce):
+        """We set the alphas"""
+        # TODO: Set values of module differently
+        print(alpha_normal[0])
+        for i, (r, n) in enumerate(zip(alpha_reduce, alpha_normal)):
+            self.alpha_normal[i].data = r
+            self.alpha_reduce[i].data = n
+
     def reduce_operations(self, config, current_stage):
         """P-DARTS, Obtain alpha weights to reduce the operations by the
         specified amount for the current stage.
+
+        TODO: Can we consider the pairwise alphas here as well?
         """
         switches_normal = copy.deepcopy(config.switches_normal)
         switches_reduce = copy.deepcopy(config.switches_reduce)
@@ -262,10 +282,9 @@ class SearchCNNController(nn.Module):
 
     def _adjust_switches(self, weights, switches, ops_drop,
                          edges):
-
-        # Original P-DARTS, There are 4 intermediate nodes in a cell,
-        # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-        # number of edges in a cell.
+        """Original P-DARTS, There are 4 intermediate nodes in a cell,
+        resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+        number of edges in a cell."""
 
         for i in range(edges):
             idxs = np.where(switches[i])[0].tolist()
@@ -704,17 +723,6 @@ class SearchCNNController(nn.Module):
     def named_alphas(self):
         for n, p in self._alphas:
             yield n, p
-
-    def arch_parameters(self):
-        """P-DARTS method to obtain architecture parameters,
-        these variables are used in reduce_operations and are
-        not normalized
-        """
-        self._arch_parameters = [
-            self.alpha_normal,
-            self.alpha_reduce,
-        ]
-        return self._arch_parameters
 
 
 def broadcast_list(l, device_ids):

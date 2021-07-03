@@ -7,11 +7,13 @@ import numpy as np
 import pickle
 import torch
 import torch.nn.functional as F
+
 from metanas.meta_optimizer.reptile import NAS_Reptile
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
-from metanas.task_optimizer.darts import Darts
+from metanas.task_optimizer.unas import UNAS
+
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
@@ -39,7 +41,7 @@ cf. 3rd-party-licenses.txt in root directory.
 
 
 def meta_architecture_search(
-    config, task_optimizer_cls=Darts, meta_optimizer_cls=NAS_Reptile
+    config, task_optimizer_cls=UNAS, meta_optimizer_cls=NAS_Reptile
 ):
     config.logger.info("Start meta architecture search")
 
@@ -795,7 +797,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
             f"Test data evaluation{prefix}:: "
             f"[{eval_epoch:2d}/{config.eval_epochs}] "
             f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
-            f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
+            f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, "
+            f"{1.00:.1%})"
             f" \n Sparse_num_params (mean, min, max): {np.mean(paramas_logger)}, "
             f"{np.min(paramas_logger)}, {np.max(paramas_logger)}"
         )

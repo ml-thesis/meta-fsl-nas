@@ -74,11 +74,13 @@ def train(args):
 
                     test_logit = model(test_input)
                     outer_loss += F.cross_entropy(test_logit,
-                                                  test_target).item()/(args.batch_size * args.inner_steps)
+                                                  test_target).item(
+                    )/(args.batch_size * args.inner_steps)
 
                     with torch.no_grad():
                         accuracy += get_accuracy(test_logit,
-                                                 test_target).item()/(args.batch_size * args.inner_steps)
+                                                 test_target).item(
+                        )/(args.batch_size * args.inner_steps)
 
             # Update the parameters in the meta-learning step
             weights_after = model.state_dict()

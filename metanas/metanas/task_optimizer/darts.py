@@ -402,7 +402,8 @@ class Architect:
         dw = dw` { L_val(w`, alpha) }
         w+ = w + eps * dw
         w- = w - eps * dw
-        hessian = (dalpha { L_train(w+, alpha) } - dalpha { L_train(w-, alpha) }) / (2*eps)
+        hessian = (dalpha { L_train(w+, alpha) } - dalpha{ L_train(w-, alpha)})
+                    / (2*eps)
         eps = 0.01 / ||dw||
         """
         norm = torch.cat([w.view(-1) for w in dw]).norm()
