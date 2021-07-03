@@ -459,7 +459,7 @@ def train(
             # cells, i.e., L_k > L_k−1
             if config.use_search_space_approximation:
                 # Increase initial channels
-                config.initial_channels += config.add_init_channels
+                config.init_channels += config.add_init_channels
                 config.layers += config.add_layers
 
             n_ops = sum(list(map(int, config.switches_normal[0])))
@@ -484,10 +484,11 @@ def train(
             config.logger.info(
                 "P-DARTS: dropout p operations = "
                 f"{config.dropout_ops[current_stage]}")
-            config.logger.info(
-                f"P-DARTS: switches normal = {config.switches_normal}")
-            config.logger.info(
-                f"P-DARTS: switches reduce = {config.switches_reduce}")
+            # TODO: Clutters the logging
+            # config.logger.info(
+            #     f"P-DARTS: switches normal = {config.switches_normal}")
+            # config.logger.info(
+            #     f"P-DARTS: switches reduce = {config.switches_reduce}")
 
         for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
             time_es = time.time()
@@ -513,7 +514,7 @@ def train(
 
             # Each task starts with the current meta state
             meta_state = copy.deepcopy(meta_model.state_dict())
-            global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
+            global_progress = f"[Meta-Epoch {staging_epoch:2d}/{config.total_meta_epochs}] "
             task_infos = []
 
             time_bs = time.time()
@@ -542,7 +543,7 @@ def train(
             # update meta LR
             # Adjusted to staging epochs, instead of meta epochs
             if (a_meta_lr_scheduler is not None) and \
-                    (staging_epoch >= config.warm_up_epochs):
+                    (meta_epoch >= config.warm_up_epochs):
                 a_meta_lr_scheduler.step()
 
             if w_meta_lr_scheduler is not None:
@@ -551,9 +552,9 @@ def train(
             time_ee = time.time()
             total_time.update(time_ee - time_es)
 
-            if meta_epoch % config.print_freq == 0:
+            if staging_epoch % config.print_freq == 0:
                 config.logger.info(
-                    f"Train: [{meta_epoch:2d}/{config.meta_epochs}] "
+                    f"Train: [{staging_epoch:2d}/{config.total_meta_epochs}] "
                     f"Time (sample, batch, sp_io, total): {sample_time.avg:.2f},"
                     f"{batch_time.avg:.2f}, "
                     f"{io_time.avg:.2f}, {total_time.avg:.2f} "
@@ -562,7 +563,8 @@ def train(
                 )
 
             # meta testing every config.eval_freq epochs
-            if meta_epoch % config.eval_freq == 0:  # meta test eval + backup
+            # meta test eval + backup
+            if staging_epoch % config.eval_freq == 0:
                 meta_test_batch = task_distribution.sample_meta_test()
 
                 # Each task starts with the current meta state
@@ -576,7 +578,7 @@ def train(
                     copy.deepcopy(task_optimizer.a_optim.state_dict()),
                 ]
 
-                global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
+                global_progress = f"[Meta-Epoch {staging_epoch:2d}/{config.total_meta_epochs}]"
                 task_infos = []
 
                 # P-DARTS, limit the skip connections in the last stage
@@ -611,7 +613,7 @@ def train(
                     meta_model.load_state_dict(meta_state)
 
                 config.logger.info(
-                    f"Train: [{meta_epoch:2d}/{config.meta_epochs}] "
+                    f"Train: [{staging_epoch:2d}/{config.total_meta_epochs}] "
                     f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
                     "Test-TestPrec@(1,) "
                     f"({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
@@ -623,7 +625,7 @@ def train(
                 # print cells
                 config.logger.info(f"genotype = {task_infos[0].genotype}")
                 config.logger.info(
-                    f"alpha vals = {a for a in meta_model.alphas()}")
+                    f"alpha vals = {[a for a in meta_model.alphas()]}")
 
                 # reset the states so that meta training doesnt see
                 # meta-testing
@@ -652,7 +654,7 @@ def train(
                     meta_optimizer,
                     task_optimizer,
                     config.path,
-                    meta_epoch,
+                    staging_epoch,
                     job_id=config.job_id,
                 )
 
@@ -669,7 +671,8 @@ def train(
                     meta_model_prune_threshold=config.meta_model_prune_threshold
                 )
 
-                staging_epoch += 1
+            # Keep track of the total epochs, combining every stage
+            staging_epoch += 1
 
         # We reduce the operation space of O_k candidate operations
         # at the end of each stage, i.e. |O^k_(i,j)| = O_k > O_k-1
@@ -753,6 +756,7 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
         global_progress = f"[Eval-Epoch {eval_epoch:2d}/{config.eval_epochs}]"
         task_infos = []
 
+        # TODO: Do we limit skip-connections?
         for task in meta_test_batch:
             time_ts = time.time()
             task_infos += [

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DATASET=omniglot
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/metanas/data
+DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_train
 		
 mkdir -p $TRAIN_DIR
@@ -37,8 +37,10 @@ args=(
     --meta_epochs 25 \
     --warm_up_epochs 10 \
     --use_pairwise_input_alphas \
-    --eval_freq 40 \
-    --eval_epochs 20 \
+    --eval_freq 15 \
+    --eval_epochs 5 \
+
+    --print_freq 5 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \

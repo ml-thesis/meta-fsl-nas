@@ -37,10 +37,13 @@ def set_hyperparameter(config):
     # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
     # DARTS in the initial stage.
     config.architecture_stages = 3
+    # These are the epochs of all stages combined,
+    config.total_meta_epochs = config.architecture_stages * config.meta_epochs
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    config.drop_number_operations = [1, 1, 2]
+    # In our case, the third stage will never drop operations.
+    config.drop_number_operations = [2, 2, 0]
 
     # Dropout rate on the operations
     config.dropout_ops = [0, 0.3, 0.7]
@@ -83,7 +86,7 @@ def set_hyperparameter(config):
         config.batch_size = 20
         config.batch_size_test = 10
         config.meta_batch_size = 10
-        # Adjusted learning rate, to PDARTS
+        # Adjusted learning rate, to PDARTS numbers
         config.w_lr = 0.0006
         config.alpha_lr = 0.0006
         config.w_meta_lr = 1.0

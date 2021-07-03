@@ -22,7 +22,7 @@ args=(
 
     # few shot params
      # examples per class
-    --n 5 \
+    --n 1 \
     # number classes  
     --k 20 \
     # test examples per class
@@ -31,18 +31,15 @@ args=(
     --meta_model_prune_threshold 0.001 \
     --alpha_prune_threshold 0.001 \
     # Meta Learning
-    # Original settings 30_000 meta epochs
-    # and warm_up_epochs 15_000.
     --meta_model searchcnn \
-    --meta_epochs 1 \
+    --meta_epochs 2 \
     --test_task_train_steps 2 \
 
     --warm_up_epochs 1 \
     --use_pairwise_input_alphas \
-    # --eval_freq 2500 \
-    --eval_freq 6 \
-    # --eval_epochs 200 \
+    --eval_freq 2 \
     --eval_epochs 1 \
+    --print_freq 2 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \
@@ -56,8 +53,11 @@ args=(
     --nodes 3 \
     --reduction_layers 1 3 \
     --use_first_order_darts \
-
     --use_torchmeta_loader \
+
+    # P-DARTS
+    --use_search_space_approximation \
+    --use_search_space_regularization \
 
 )
 
