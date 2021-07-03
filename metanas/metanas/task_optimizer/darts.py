@@ -45,7 +45,7 @@ class Darts:
 
         # architecture optimizer
         self.a_optim = torch.optim.Adam(
-            model.alphas(),
+            self.model.alphas(),
             self.config.alpha_lr,
             betas=(0.0, 0.999),
             weight_decay=self.config.alpha_weight_decay,
@@ -221,7 +221,7 @@ class Darts:
         if self.config.drop_path_prob > 0.0:
             self.model.drop_path_prob(0.0)
 
-        # TODO: Also, remove skip-connection dropouts during evaluation
+        # Also, remove skip-connection dropouts during evaluation
         if dropout_sk > 0.0:
             self.model.drop_out_skip_connections(0.0)
 

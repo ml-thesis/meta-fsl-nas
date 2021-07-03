@@ -14,7 +14,7 @@ args=(
     --path ${TRAIN_DIR} \
     --data_path ${DATASET_DIR} \
     --dataset $DATASET
-    --hp_setting 'og_metanas' \
+    --hp_setting 'og_pdarts' \
     --use_hp_setting 1 \
     --workers 0 \
     --gpus 0 \
@@ -22,8 +22,8 @@ args=(
 
     # few shot params
      # examples per class
-    --n 5 \
-    # number classes  
+    --n 1 \
+    # number classes
     --k 20 \
     # test examples per class
     --q 1 \
@@ -32,26 +32,20 @@ args=(
     --meta_model_prune_threshold 0.001 \
     --alpha_prune_threshold 0.001 \
     # Meta Learning
-    # Originally, 30_000 meta epochs
-    # and 15_000 warm_up_epochs
     --meta_model searchcnn \
-    --meta_epochs 18 \
-    --warm_up_epochs 3 \
+    # Repeated every stage, e.g. 3 times
+    --meta_epochs 25 \
+    --warm_up_epochs 10 \
     --use_pairwise_input_alphas \
-    # --eval_freq 2500 \
-    --eval_freq 5 \
-    # --eval_epochs 200 \
-    --eval_epochs 3 \
-
-    --use_search_space_approximation
-    --use_search_space_regularization
+    --eval_freq 40 \
+    --eval_epochs 20 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \
     --normalizer_t_min 0.05 \
     --normalizer_t_max 1.0 \
-    # P-DARTS 0.3, metaNAS 0.2
-    --drop_path_prob 0.3 \
+    # Originally, 0.3 in metaNAS
+    --drop_path_prob 0.2 \
 
     # Architectures
     --init_channels 28 \
@@ -59,9 +53,15 @@ args=(
     --nodes 3 \
     --reduction_layers 1 3 \
     --use_first_order_darts \
-
     --use_torchmeta_loader \
 
+    # P-DARTS
+    --use_search_space_approximation \
+    --use_search_space_regularization \
+
+    --add_layers 5 \
+    --add_init_channels 12 \
+    --limit_skip_connections 2 \
 )
 
 

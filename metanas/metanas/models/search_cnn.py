@@ -251,11 +251,11 @@ class SearchCNNController(nn.Module):
         weights_normal = np.concatenate(weights_normal, axis=0)
         weights_reduce = np.concatenate(weights_reduce, axis=0)
 
-        switches_reduce = self._adjust_switches(weights_normal,
+        switches_reduce = self._adjust_switches(weights_reduce,
                                                 switches_reduce,
                                                 ops_drop, config.edges)
 
-        switches_normal = self._adjust_switches(weights_reduce,
+        switches_normal = self._adjust_switches(weights_normal,
                                                 switches_normal,
                                                 ops_drop, config.edges)
         return switches_normal, switches_reduce
@@ -266,6 +266,7 @@ class SearchCNNController(nn.Module):
         # Original P-DARTS, There are 4 intermediate nodes in a cell,
         # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
         # number of edges in a cell.
+
         for i in range(edges):
             idxs = np.where(switches[i])[0].tolist()
 
@@ -331,11 +332,14 @@ class SearchCNNController(nn.Module):
             self.alpha_pw_normal is not None
         ), "Error: function only availaible for pw models"
 
+        # get normalized weights
         weights_normal = [
             self.apply_normalizer(alpha) for alpha in self.alpha_normal
-        ]  # get normalized weights
-        weights_reduce = [self.apply_normalizer(
-            alpha) for alpha in self.alpha_reduce]
+        ]
+
+        weights_reduce = [
+            self.apply_normalizer(alpha) for alpha in self.alpha_reduce
+        ]
 
         weights_pw_normal = [
             self.apply_normalizer(alpha) for alpha in self.alpha_pw_normal
@@ -627,6 +631,8 @@ class SearchCNNController(nn.Module):
                  limit_skip_connections=None):
         """Generate genotype based on current weights and switches
         """
+
+        # The pairwise alphas can't work together with turning off ops
         if self.use_pairwise_input_alphas:
             # Original implementation uses, gt.parse_pairwise
             weights_pw_normal = [

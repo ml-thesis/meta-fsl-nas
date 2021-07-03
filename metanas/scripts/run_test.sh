@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DATASET=mixedomniglottriplemnist #omniglot
+DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/test_exp
 		
@@ -34,7 +34,7 @@ args=(
     # Original settings 30_000 meta epochs
     # and warm_up_epochs 15_000.
     --meta_model searchcnn \
-    --meta_epochs 4 \
+    --meta_epochs 1 \
     --test_task_train_steps 2 \
 
     --warm_up_epochs 1 \
