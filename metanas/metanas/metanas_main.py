@@ -83,9 +83,6 @@ def meta_architecture_search(
     config.task_optimizer_cls = task_optimizer_cls
     config.meta_optimizer_cls = meta_optimizer_cls
 
-    # Start off with the first stage,
-    config.initial_channels = config.init_channels_stages[0]
-
     # Initialize the variables for Search Space Approximation,
     # Original P-DARTS, There are 4 intermediate nodes in a cell,
     # resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
@@ -143,6 +140,12 @@ def meta_architecture_search(
 
     config.logger.info(
         f"alpha initial = {[alpha for alpha in meta_model.alphas()]} ")
+    config.logger.info(
+        f"Using Search Space Approximation = {config.use_search_space_approximation}"
+    )
+    config.logger.info(
+        f"Using Search Space Regularization = {config.use_search_space_regularization}"
+    )
 
     utils.print_config_params(config, config.logger.info)
 
@@ -453,51 +456,19 @@ def train(
         config, meta_optimizer
     )
 
-    for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
+    # P-DARTS
+    # addition of staging (G_k) for Search Space Approximation and
+    # Regularization.
+    for current_stage in range(config.architecture_stages):
 
-        time_es = time.time()
-        meta_train_batch = task_distribution.sample_meta_train()
-        time_samp = time.time()
-
-        sample_time.update(time_samp - time_es)
-
-        ####
-        # P-DARTS
-        # addition of staging (G_k) for Search Space Approximation and
-        # Regularization.
-        current_stage = int((meta_epoch-1) //
-                            (config.meta_epochs / config.architecture_stages))
-
-        scale_factor = 0.2
-        # Ignoring the warm-up epochs
-        dropout_current_stage = config.dropout_operations[current_stage]
-        dropout_rate = float(dropout_current_stage *
-                             np.exp(-
-                                    (meta_epoch - config.warm_up_epochs *
-                                     scale_factor)))
-
-        # When we enter a new stage, G_k, we reinitialize the weights
-        # and architecture parameters as we've just removed an operation o_i
-        prev_stage = int((meta_epoch-2) // (config.meta_epochs /
-                                            config.architecture_stages))
-
-        if current_stage > prev_stage and current_stage != 0:
-            config.logger.info(f"P-DARTS: Entered new stage: {current_stage}")
-
+        config.logger.info(f"P-DARTS: Entered new stage = {current_stage+1}")
+        if current_stage != 0:
             # We increase the depth of the super-network by stacking more
             # cells, i.e., L_k > L_k−1
             if config.use_search_space_approximation:
+                # Increase initial channels
+                config.init_channels += config.add_init_channels
                 config.layers += config.add_layers
-
-            # Increase initial channels
-            config.initial_channels = \
-                config.init_channels_stages[current_stage]
-
-            # We reduce the operation space of O_k candidate operations, i.e.
-            # |O^k_(i,j)| = O_k > O_k-1
-            if config.use_search_space_approximation:
-                config.switches_normal, config.switches_reduce = \
-                    meta_model.reduce_operations(config, current_stage+1)
 
             n_ops = sum(list(map(int, config.switches_normal[0])))
             config.logger.info(
@@ -518,176 +489,204 @@ def train(
                 config, config.task_optimizer_cls, meta_model
             )
 
-            # Set the dropout rate for skip-connections,
-            dropout_rate = dropout_current_stage
-
             config.logger.info(
                 "P-DARTS: dropout p operations = "
-                f"{config.dropout_operations[current_stage]}")
-            config.logger.info(
-                f"P-DARTS: switches normal = {config.switches_normal}")
-            config.logger.info(
-                f"P-DARTS: switches reduce = {config.switches_reduce}")
-        ####
+                f"{config.dropout_ops[current_stage]}")
+            # Commented due to cluttering the logging
+            # config.logger.info(
+            #     f"P-DARTS: switches normal = {config.switches_normal}")
+            # config.logger.info(
+            #     f"P-DARTS: switches reduce = {config.switches_reduce}")
 
-        if not config.use_search_space_regularization:
-            dropout_rate = 0.0
+        for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
+            time_es = time.time()
+            meta_train_batch = task_distribution.sample_meta_train()
+            time_samp = time.time()
 
-        # Each task starts with the current meta state
-        meta_state = copy.deepcopy(meta_model.state_dict())
-        global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
-        task_infos = []
+            sample_time.update(time_samp - time_es)
 
-        time_bs = time.time()
-        for task in meta_train_batch:
-            task_infos += [
-                task_optimizer.step(
-                    task, epoch=meta_epoch, global_progress=global_progress,
-                    switches_normal=config.switches_normal,
-                    switches_reduce=config.switches_reduce,
-                    dropout_sk=dropout_rate
-                )
-            ]
-            meta_model.load_state_dict(meta_state)
+            # Set the dropout rate for skip-connections,
+            if config.use_search_space_regularization:
+                scale_factor = config.dropout_scale_factor
+                dropout_stage = config.dropout_ops[current_stage]
 
-        time_be = time.time()
-
-        batch_time.update(time_be - time_bs)
-
-        train_test_loss.append(config.losses_logger.avg)
-        train_test_accu.append(config.top1_logger.avg)
-
-        # do a meta update
-        meta_optimizer.step(task_infos)
-
-        # update meta LR
-        # Adjusted to staging epochs, instead of meta epochs
-        if (a_meta_lr_scheduler is not None) and \
-                (staging_epoch >= config.warm_up_epochs):
-            a_meta_lr_scheduler.step()
-
-        if w_meta_lr_scheduler is not None:
-            w_meta_lr_scheduler.step()
-
-        time_ee = time.time()
-        total_time.update(time_ee - time_es)
-
-        if meta_epoch % config.print_freq == 0:
-            config.logger.info(
-                f"Train: [{meta_epoch:2d}/{config.meta_epochs}] "
-                f"Time (sample, batch, sp_io, total): {sample_time.avg:.2f},"
-                f"{batch_time.avg:.2f}, "
-                f"{io_time.avg:.2f}, {total_time.avg:.2f} "
-                f"Train-TestLoss {config.losses_logger.avg:.3f} "
-                f"Train-TestPrec@(1,) ({config.top1_logger.avg:.1%}, {1.00:.1%})"
-            )
-
-        # meta testing every config.eval_freq epochs
-        if meta_epoch % config.eval_freq == 0:  # meta test eval + backup
-            meta_test_batch = task_distribution.sample_meta_test()
+                if meta_epoch < config.warm_up_epochs:
+                    dropout_rate = float(dropout_stage) * (
+                        config.meta_epochs - meta_epoch - 1) / config.meta_epochs
+                else:
+                    dropout_rate = float(dropout_stage) * np.exp(
+                        -(meta_epoch - config.warm_up_epochs) *
+                        scale_factor)
+            else:
+                dropout_rate = 0.0
 
             # Each task starts with the current meta state
             meta_state = copy.deepcopy(meta_model.state_dict())
-
-            # copy also the optimizer states
-            meta_optims_state = [
-                copy.deepcopy(meta_optimizer.w_meta_optim.state_dict()),
-                copy.deepcopy(meta_optimizer.a_meta_optim.state_dict()),
-                copy.deepcopy(task_optimizer.w_optim.state_dict()),
-                copy.deepcopy(task_optimizer.a_optim.state_dict()),
-            ]
-
-            global_progress = f"[Meta-Epoch "
-            "{meta_epoch:2d}/{config.meta_epochs}]"
+            global_progress = f"[Meta-Epoch {staging_epoch:2d}/{config.total_meta_epochs}] "
             task_infos = []
 
-            # P-DARTS, limit the skip connections in the last stage
-            # +1 to adjust for the index
-            last_stage = current_stage+1 == config.architecture_stages
-
-            for task in meta_test_batch:
-                if not last_stage:
-                    task_infos += [
-                        task_optimizer.step(
-                            task,
-                            epoch=meta_epoch,
-                            global_progress=global_progress,
-                            test_phase=True,
-                            switches_normal=config.switches_normal,
-                            switches_reduce=config.switches_reduce
-                        )
-                    ]
-                elif last_stage:
-                    task_infos += [
-                        task_optimizer.step(
-                            task,
-                            epoch=meta_epoch,
-                            global_progress=global_progress,
-                            test_phase=True,
-                            switches_normal=config.switches_normal,
-                            switches_reduce=config.switches_reduce,
-                            num_of_sk=config.limit_skip_connections
-                        )
-                    ]
-
+            time_bs = time.time()
+            for task in meta_train_batch:
+                task_infos += [
+                    task_optimizer.step(
+                        task, epoch=meta_epoch,
+                        global_progress=global_progress,
+                        switches_normal=config.switches_normal,
+                        switches_reduce=config.switches_reduce,
+                        dropout_sk=dropout_rate
+                    )
+                ]
                 meta_model.load_state_dict(meta_state)
 
-            config.logger.info(
-                f"Train: [{meta_epoch:2d}/{config.meta_epochs}] "
-                f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
-                f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
-            )
+            time_be = time.time()
 
-            test_test_loss.append(config.losses_logger_test.avg)
-            test_test_accu.append(config.top1_logger_test.avg)
+            batch_time.update(time_be - time_bs)
 
-            # print cells
-            config.logger.info(f"genotype = {task_infos[0].genotype}")
-            config.logger.info(
-                f"alpha vals = {[alpha for alpha in meta_model.alphas()]}"
-            )
+            train_test_loss.append(config.losses_logger.avg)
+            train_test_accu.append(config.top1_logger.avg)
 
-            # reset the states so that meta training doesnt see meta testing
-            meta_optimizer.w_meta_optim.load_state_dict(meta_optims_state[0])
-            meta_optimizer.a_meta_optim.load_state_dict(meta_optims_state[1])
-            task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
-            task_optimizer.a_optim.load_state_dict(meta_optims_state[3])
+            # do a meta update
+            meta_optimizer.step(task_infos)
 
-            print(meta_model.genotype(config.switches_normal,
-                                      config.switches_reduce))
-            # save checkpoint
-            experiment = {
-                "genotype": [task_info.genotype for task_info in task_infos],
-                "meta_genotype": meta_model.genotype(config.switches_normal,
-                                                     config.switches_reduce),
-                "alphas": [alpha for alpha in meta_model.alphas()],
-            }
-            experiment.update(train_info)
-            pickle_to_file(experiment, os.path.join(
-                config.path, "experiment.pickle"))
+            # update meta LR
+            # Adjusted to staging epochs, instead of meta epochs
+            if (a_meta_lr_scheduler is not None) and \
+                    (meta_epoch >= config.warm_up_epochs):
+                a_meta_lr_scheduler.step()
 
-            utils.save_state(
-                meta_model,
-                meta_optimizer,
-                task_optimizer,
-                config.path,
-                meta_epoch,
-                job_id=config.job_id,
-            )
+            if w_meta_lr_scheduler is not None:
+                w_meta_lr_scheduler.step()
 
-            # reset time averages during testing
-            sample_time.reset()
-            batch_time.reset()
-            total_time.reset()
-            io_time.reset()
+            time_ee = time.time()
+            total_time.update(time_ee - time_es)
 
-            # prune alpha values in meta model every config.eval_freq epochs
-            _prune_alphas(
-                meta_model,
-                meta_model_prune_threshold=config.meta_model_prune_threshold
-            )
+            if staging_epoch % config.print_freq == 0:
+                config.logger.info(
+                    f"Train: [{staging_epoch:2d}/{config.total_meta_epochs}] "
+                    f"Time (sample, batch, sp_io, total): {sample_time.avg:.2f},"
+                    f"{batch_time.avg:.2f}, "
+                    f"{io_time.avg:.2f}, {total_time.avg:.2f} "
+                    f"Train-TestLoss {config.losses_logger.avg:.3f} "
+                    f"Train-TestPrec@(1,) ({config.top1_logger.avg:.1%}, {1.00:.1%})"
+                )
 
+            # meta testing every config.eval_freq epochs
+            # meta test eval + backup
+            if staging_epoch % config.eval_freq == 0:
+                meta_test_batch = task_distribution.sample_meta_test()
+
+                # Each task starts with the current meta state
+                meta_state = copy.deepcopy(meta_model.state_dict())
+
+                # copy also the optimizer states
+                meta_optims_state = [
+                    copy.deepcopy(meta_optimizer.w_meta_optim.state_dict()),
+                    copy.deepcopy(meta_optimizer.a_meta_optim.state_dict()),
+                    copy.deepcopy(task_optimizer.w_optim.state_dict()),
+                    copy.deepcopy(task_optimizer.a_optim.state_dict()),
+                ]
+
+                global_progress = f"[Meta-Epoch {staging_epoch:2d}/{config.total_meta_epochs}]"
+                task_infos = []
+
+                # P-DARTS, limit the skip connections in the last stage
+                # +1 to adjust for the index
+                last_stage = current_stage+1 == config.architecture_stages
+
+                for task in meta_test_batch:
+                    if not last_stage:
+                        task_infos += [
+                            task_optimizer.step(
+                                task,
+                                epoch=meta_epoch,
+                                global_progress=global_progress,
+                                test_phase=True,
+                                switches_normal=config.switches_normal,
+                                switches_reduce=config.switches_reduce
+                            )
+                        ]
+                    elif last_stage:
+                        task_infos += [
+                            task_optimizer.step(
+                                task,
+                                epoch=meta_epoch,
+                                global_progress=global_progress,
+                                test_phase=True,
+                                switches_normal=config.switches_normal,
+                                switches_reduce=config.switches_reduce,
+                                num_of_sk=config.limit_skip_connections
+                            )
+                        ]
+
+                    meta_model.load_state_dict(meta_state)
+
+                config.logger.info(
+                    f"Train: [{staging_epoch:2d}/{config.total_meta_epochs}] "
+                    f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
+                    "Test-TestPrec@(1,) "
+                    f"({config.top1_logger_test.avg:.1%}, {1.00:.1%})"
+                )
+
+                test_test_loss.append(config.losses_logger_test.avg)
+                test_test_accu.append(config.top1_logger_test.avg)
+
+                # print cells
+                config.logger.info(f"genotype = {task_infos[0].genotype}")
+                config.logger.info(
+                    f"alpha vals = {[a for a in meta_model.alphas()]}")
+
+                # reset the states so that meta training doesnt see
+                # meta-testing
+                meta_optimizer.w_meta_optim.load_state_dict(
+                    meta_optims_state[0])
+                meta_optimizer.a_meta_optim.load_state_dict(
+                    meta_optims_state[1])
+                task_optimizer.w_optim.load_state_dict(meta_optims_state[2])
+                task_optimizer.a_optim.load_state_dict(meta_optims_state[3])
+
+                print(meta_model.genotype(config.switches_normal,
+                                          config.switches_reduce))
+                # save checkpoint
+                experiment = {
+                    "genotype": [task_info.genotype for task_info in task_infos],
+                    "meta_genotype": meta_model.genotype(
+                        config.switches_normal, config.switches_reduce),
+                    "alphas": [alpha for alpha in meta_model.alphas()],
+                }
+                experiment.update(train_info)
+                pickle_to_file(experiment, os.path.join(
+                    config.path, "experiment.pickle"))
+
+                utils.save_state(
+                    meta_model,
+                    meta_optimizer,
+                    task_optimizer,
+                    config.path,
+                    staging_epoch,
+                    job_id=config.job_id,
+                )
+
+                # reset time averages during testing
+                sample_time.reset()
+                batch_time.reset()
+                total_time.reset()
+                io_time.reset()
+
+                # prune alpha values in meta model every config.eval_freq
+                # epochs
+                _prune_alphas(
+                    meta_model,
+                    meta_model_prune_threshold=config.meta_model_prune_threshold
+                )
+
+            # Keep track of the total epochs, combining every stage
             staging_epoch += 1
+
+        # We reduce the operation space of O_k candidate operations
+        # at the end of each stage, i.e. |O^k_(i,j)| = O_k > O_k-1
+        if current_stage+1 != config.architecture_stages:
+            config.switches_normal, config.switches_reduce = \
+                meta_model.reduce_operations(config, current_stage+1)
 
     # end of meta train
     utils.save_state(
@@ -765,6 +764,7 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
         global_progress = f"[Eval-Epoch {eval_epoch:2d}/{config.eval_epochs}]"
         task_infos = []
 
+        # TODO: Do we limit skip-connections?
         for task in meta_test_batch:
             time_ts = time.time()
             task_infos += [
@@ -794,7 +794,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
         prefix = f" (prefix: {config.eval_prefix})" if config.eval_prefix else ""
 
         config.logger.info(
-            f"Test data evaluation{prefix}:: [{eval_epoch:2d}/{config.eval_epochs}] "
+            f"Test data evaluation{prefix}:: "
+            f"[{eval_epoch:2d}/{config.eval_epochs}] "
             f"Test-TestLoss {config.losses_logger_test.avg:.3f} "
             f"Test-TestPrec@(1,) ({config.top1_logger_test.avg:.1%}, "
             f"{1.00:.1%})"
@@ -1050,7 +1051,11 @@ if __name__ == "__main__":
     # Warm-start/only tuning network parameters in first 10 epochs.
     # Finally, the number of normal cells in the network increases in these
     # three stages, to 5, 11, 17, respectively.
-    parser.add_argument("--add_layers", type=int, default=2)
+    parser.add_argument("--add_layers", type=int, default=5)
+
+    # Meanwhile, we increase the number of initial channels from
+    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
+    parser.add_argument("--add_init_channels", type=int, default=12)
 
     # Discovered cells are allowed to keep M = 2, skip connections.
     parser.add_argument("--limit_skip_connections", type=int, default=2)

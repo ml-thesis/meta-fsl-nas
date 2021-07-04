@@ -1,15 +1,11 @@
 
-import torch.nn as nn
-import torch
-import numpy as np
-from collections import OrderedDict
-import tempfile
-import shutil
-import os
-import logging
-import time
-import fcntl
 import datetime
+import logging
+import os
+import shutil
+import tempfile
+import numpy as np
+import torch
 
 """ Utilities
 Copyright (c) 2021 Robert Bosch GmbH
@@ -41,17 +37,17 @@ def set_hyperparameter(config):
     # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
     # DARTS in the initial stage.
     config.architecture_stages = 3
+    # These are the epochs of all stages combined,
+    config.total_meta_epochs = config.architecture_stages * config.meta_epochs
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
-    config.drop_number_operations = [2, 3, 2]
+    # In our case, the third stage will never drop operations.
+    config.drop_number_operations = [2, 2, 0]
 
     # Dropout rate on the operations
-    config.dropout_operations = [0, 0.3, 0.6]
-
-    # Meanwhile, we increase the number of initial channels from
-    # 16 to 28, and 40 for stage 1, 2, and 3, respectively.
-    config.init_channels_stages = [16, 28, 40]
+    config.dropout_ops = [0, 0.3, 0.7]
+    config.dropout_scale_factor = 0.2
 
     if config.hp_setting == "in_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
@@ -83,15 +79,15 @@ def set_hyperparameter(config):
         config.w_meta_anneal = 0
         config.w_task_anneal = 0
 
-    elif config.hp_setting == "ogtm_metanas":  # setting for MetaNAS
+    # Settings for MetaNAS with P-DARTS addition
+    elif config.hp_setting == "og_pdarts":
         config.task_train_steps = 5
         config.n_train = 15
-        config.batch_size = 20
+        config.batch_size = 40
         config.batch_size_test = 10
-        # P-DARTS used a large batch_size of 96
         config.meta_batch_size = 10
-        config.w_lr = 0.0006
-        config.alpha_lr = 0.0006
+        config.w_lr = 0.005
+        config.alpha_lr = 0.005
         config.w_meta_lr = 1.0
         config.a_meta_lr = 0.6
         config.a_meta_anneal = 0
@@ -323,7 +319,8 @@ def save_state(
 
     epochpath = os.path.join(path, f"e{epoch}_") if epoch is not None else path
 
-    # save the model (to temporary path if job_id is specified then then rename)
+    # save the model (to temporary path if job_id is specified then then
+    # rename)
     model_file = epochpath + "meta_state"
     model_file_tmp = model_file if job_id is None else model_file + \
         f"_{job_id}"
