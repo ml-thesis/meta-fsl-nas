@@ -2,14 +2,14 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_train_v4
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_ssa_train
 		
 mkdir -p $TRAIN_DIR
 
 
 args=(
     # Execution
-    --name metatrain_og_v4 \
+    --name metatrain_og \
     --job_id 0 \
     --path ${TRAIN_DIR} \
     --data_path ${DATASET_DIR} \
@@ -29,8 +29,8 @@ args=(
     --q 1 \
 
     # Originally, 0.01 for 30_000 epochs
-    --meta_model_prune_threshold 0.01 \
-    --alpha_prune_threshold 0.01 \
+    --meta_model_prune_threshold 0.001 \
+    --alpha_prune_threshold 0.001 \
     # Meta Learning
     --meta_model searchcnn \
     # Repeated every stage, e.g. 3 times
@@ -46,26 +46,19 @@ args=(
     --normalizer_temp_anneal_mode linear \
     --normalizer_t_min 0.05 \
     --normalizer_t_max 1.0 \
-    # Originally, 0.2 in MetaNAS
-    # Test this setting
-    --drop_path_prob 0.3 \
+    # Originally, 0.3 in metaNAS
+    --drop_path_prob 0.2 \
 
     # Architectures
     --init_channels 28 \
-    # P-DARTS layers, reduction layers and nodes
-    --layers 5 \
-    --nodes 4 \
-    --reduction_layers 2 4 \
+    --layers 4 \
+    --nodes 3 \
+    --reduction_layers 1 3 \
     --use_first_order_darts \
     --use_torchmeta_loader \
 
     # P-DARTS
-    --use_search_space_approximation \
     --use_search_space_regularization \
-
-    # Add the same weight decay as PDARTS
-    --w_weight_decay 0.0003
-    --alpha_weight_decay 0.001
 
     --add_layers 5 \
     --add_init_channels 12 \
