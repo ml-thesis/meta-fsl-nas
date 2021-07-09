@@ -2,9 +2,12 @@
 from torch.utils.data import DataLoader, RandomSampler, TensorDataset
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
-from torchvision.transforms import Compose, Resize, ToTensor, Grayscale
+from torchvision.transforms import Compose, Resize, ToTensor, Grayscale, RandomErasing
 from torchmeta.utils.data import BatchMetaDataLoader
 from torchmeta.datasets.helpers import miniimagenet, triplemnist
+
+import torch
+import numpy as np
 
 from metanas.tasks.core import TaskDistribution, Task
 from metanas.tasks.mixed_datasets import mixedomniglottriplemnist
@@ -76,6 +79,7 @@ def create_og_data_loader(
     download=False,
     use_vinyals_split=False,
     seed=None,
+    cutout=False,
 ):
     """Create a torchmeta BatchMetaDataLoader for Omniglot
 
@@ -97,16 +101,30 @@ def create_og_data_loader(
     Returns:
         A torchmeta :class:`BatchMetaDataLoader` object.
     """
-    dataset = Omniglot(
-        root,
-        num_classes_per_task=k_way,
-        transform=Compose([Resize(input_size), ToTensor()]),
-        target_transform=Categorical(num_classes=k_way),
-        class_augmentations=[Rotation([90, 180, 270])],
-        meta_split=meta_split,
-        download=download,
-        use_vinyals_split=use_vinyals_split,
-    )
+
+    if cutout:
+        dataset = Omniglot(
+            root,
+            num_classes_per_task=k_way,
+            transform=Compose(
+                [Resize(input_size), ToTensor(), RandomErasing()]),
+            target_transform=Categorical(num_classes=k_way),
+            class_augmentations=[Rotation([90, 180, 270])],
+            meta_split=meta_split,
+            download=download,
+            use_vinyals_split=use_vinyals_split,
+        )
+    else:
+        dataset = Omniglot(
+            root,
+            num_classes_per_task=k_way,
+            transform=Compose([Resize(input_size), ToTensor()]),
+            target_transform=Categorical(num_classes=k_way),
+            class_augmentations=[Rotation([90, 180, 270])],
+            meta_split=meta_split,
+            download=download,
+            use_vinyals_split=use_vinyals_split,
+        )
 
     dataset = ClassSplitter(
         dataset, shuffle=True, num_train_per_class=n_shot,
@@ -274,8 +292,8 @@ class TorchmetaTaskDistribution(TaskDistribution):
 
         self.k_way = config.k
         self.n_query = config.q  # number of query points (= test points)
-        self.n_shot_test = config.n  # shots during meta-training
-        self.n_shot_train = config.n_train  # shots during meta-testing
+        self.n_shot_test = config.n  # shots during meta-testing
+        self.n_shot_train = config.n_train  # shots during meta-training
         self.meta_batch_size_train = config.meta_batch_size
         self.meta_batch_size_test = config.test_meta_batch_size
         self.num_workers = config.workers
@@ -322,7 +340,7 @@ class TorchmetaTaskDistribution(TaskDistribution):
 
 
 class OmniglotFewShot(TorchmetaTaskDistribution):
-    def __init__(self, config, download=False):
+    def __init__(self, config, download=False, cutout=False):
         super().__init__(config, 1, 28, download)
         self.use_vinyals_split = config.use_vinyals_split
         self.train_loader = create_og_data_loader(
@@ -337,6 +355,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
             self.download,
             self.use_vinyals_split,
             seed=self.seed,
+            cutout=cutout,
         )
         self.train_it = iter(self.train_loader)
 
@@ -353,6 +372,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
                 self.download,
                 self.use_vinyals_split,
                 seed=self.seed,
+                cutout=cutout,
             )
             self.val_it = iter(self.val_loader)
 
@@ -368,6 +388,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
             self.download,
             self.use_vinyals_split,
             seed=self.seed,
+            cutout=cutout,
         )
         self.test_it = iter(self.test_loader)
 

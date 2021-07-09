@@ -1,9 +1,11 @@
 import copy
+import numpy as np
 import torch
 import torch.nn as nn
 from collections import OrderedDict, namedtuple
 from metanas.utils import utils
 from metanas.models.search_cnn import SearchCNNController
+from metanas.utils import genotypes as gt
 
 """ DARTS algorithm
 Copyright (c) 2021 Robert Bosch GmbH
@@ -30,6 +32,7 @@ class Darts:
     def __init__(self, model, config, do_schedule_lr=False):
         self.config = config
         self.model = model
+        self.primitives = config.primitives
         self.do_schedule_lr = do_schedule_lr
         self.task_train_steps = config.task_train_steps
         self.test_task_train_steps = config.test_task_train_steps
@@ -39,7 +42,7 @@ class Darts:
         self.w_optim = torch.optim.Adam(
             self.model.weights(),
             lr=self.config.w_lr,
-            betas=(0.0, 0.999),  # config.w_momentum,
+            betas=(0.0, 0.999),
             weight_decay=self.config.w_weight_decay,
         )  #
 
@@ -65,19 +68,20 @@ class Darts:
         test_phase=False,
         alpha_logger=None,
         sparsify_input_alphas=None,
-        switches_normal=None,  # P-DARTS variables
-        switches_reduce=None,
-        num_of_sk=None,
-        dropout_sk=0.0
+        num_of_skip_connections=None,
     ):
 
         log_alphas = False
+
+        # P-DARTS stages
+        stages = self.config.architecture_stages
 
         if test_phase:
             top1_logger = self.config.top1_logger_test
             losses_logger = self.config.losses_logger_test
             train_steps = self.config.test_task_train_steps
-            arch_adap_steps = int(train_steps * self.config.test_adapt_steps)
+            arch_adap_steps = int(
+                train_steps * self.config.test_adapt_steps * stages)
 
             if alpha_logger is not None:
                 log_alphas = True
@@ -86,7 +90,7 @@ class Darts:
             top1_logger = self.config.top1_logger
             losses_logger = self.config.losses_logger
             train_steps = self.config.task_train_steps
-            arch_adap_steps = train_steps
+            arch_adap_steps = train_steps * stages
 
         lr = self.config.w_lr
 
@@ -96,7 +100,7 @@ class Darts:
                 group["lr"] = self.config.w_lr
 
             w_task_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.w_optim, train_steps, eta_min=0.0
+                self.w_optim, train_steps * stages, eta_min=0.0
             )
         else:
             w_task_lr_scheduler = None
@@ -127,49 +131,138 @@ class Darts:
             if not test_phase or self.config.use_drop_path_in_meta_testing:
                 self.model.drop_path_prob(self.config.drop_path_prob)
 
-            # Similar to drop path, do not use drop out skip-connections
-            # while in test phase
-        if dropout_sk > 0.0:
-            if not test_phase:
-                self.model.drop_out_skip_connections(dropout_sk)
+        # P-DARTS
+        # addition of staging (G_k) for Search Space Approximation and
+        # Regularization.
+        scale_factor = self.config.dropout_scale_factor
 
-        # task train_steps = epochs per task
-        for train_step in range(train_steps):
+        # For softmax temperature
+        global_train_steps = 0
 
-            warm_up = (
-                epoch < self.warm_up_epochs
-            )  # if epoch < warm_up_epochs, do warm up
+        if self.config.use_search_space_approximation or \
+                self.config.use_search_space_regularization:
+            for current_stage in range(self.config.architecture_stages):
 
-            if (
-                train_step >= arch_adap_steps
-            ):  # no architecture adap after arch_adap_steps steps
-                warm_up = 1
+                # Number of ops to preserve
+                n_ops = len(self.primitives) - \
+                    self.config.drop_number_operations[current_stage]
+                dropout_stage = self.config.dropout_ops[current_stage]
 
-            if w_task_lr_scheduler is not None:
-                w_task_lr_scheduler.step()
+                if current_stage != 0:
+                    # We increase the depth of the super-network by stacking
+                    # more cells, i.e., L_k > L_k−1
+                    if self.config.use_search_space_approximation and \
+                            self.config.use_reinitialize_model:
+                        self.model.reinit_search_model()
 
-            if a_task_lr_scheduler is not None:
-                a_task_lr_scheduler.step()
+                for train_step in range(train_steps):
+                    warm_up = (
+                        epoch < self.warm_up_epochs
+                    )  # if epoch < warm_up_epochs, do warm up
 
-            train(
-                task,
-                self.model,
-                self.architect,
-                self.w_optim,
-                self.a_optim,
-                lr,
-                global_progress,
-                self.config,
-                warm_up,
-            )
+                    # Set the dropout rate for skip-connections,
+                    if self.config.use_search_space_regularization:
+                        # Exponential decay in dropout rate
+                        dropout_rate = dropout_stage * \
+                            np.exp(-global_train_steps * scale_factor)
 
-            if (
-                model_has_normalizer
-                and train_step < (arch_adap_steps - 1)
-                and not warm_up
-            ):  # todo check if not warm_up is correct
-                self.model.normalizer["params"]["curr_step"] += 1
-                self.architect.v_net.normalizer["params"]["curr_step"] += 1
+                        if not test_phase:
+                            self.model.drop_out_skip_connections(dropout_rate)
+
+                    # tracked based on the global steps not the stage training
+                    # steps
+                    if (
+                        global_train_steps >= arch_adap_steps
+                    ):  # no architecture adap after arch_adap_steps steps
+                        warm_up = 1
+
+                    if w_task_lr_scheduler is not None:
+                        w_task_lr_scheduler.step()
+
+                    if a_task_lr_scheduler is not None:
+                        a_task_lr_scheduler.step()
+
+                    train(
+                        task,
+                        self.model,
+                        self.architect,
+                        self.w_optim,
+                        self.a_optim,
+                        lr,
+                        global_progress,
+                        self.config,
+                        warm_up,
+                    )
+
+                    if (
+                        model_has_normalizer
+                        and global_train_steps < (arch_adap_steps - 1)
+                        and not warm_up
+                    ):  # todo check if not warm_up is correct
+                        self.model.normalizer["params"]["curr_step"] += 1
+                        self.architect.v_net.normalizer["params"]["curr_step"] += 1
+
+                    global_train_steps += 1
+
+                if not warm_up:
+                    # We reduce the operation space of O_k candidate operations
+                    # at the end of each stage, i.e. |O^k_(i,j)| = O_k > O_k-1
+                    if current_stage+1 != self.config.architecture_stages \
+                            or self.config.use_search_space_approximation:
+
+                        with torch.no_grad():
+                            for normal, reduce in zip(self.model.alpha_normal,
+                                                      self.model.alpha_reduce):
+                                _, indices = torch.topk(normal[:, :], n_ops)
+                                _, indices = torch.topk(reduce[:, :], n_ops)
+
+                                mask = torch.zeros(len(normal), len(
+                                    self.primitives)).cuda()
+                                normal.data = mask.scatter_(
+                                    1, indices, 1.) * normal
+
+                                mask = torch.zeros(len(reduce), len(
+                                    self.primitives)).cuda()
+                                reduce.data = mask.scatter_(
+                                    1, indices, 1.) * reduce
+        else:
+            for train_step in range(train_steps):
+                warm_up = (
+                    epoch < self.warm_up_epochs
+                )  # if epoch < warm_up_epochs, do warm up
+
+                # tracked based on the global steps not the stage training
+                # steps
+                if (
+                    train_step >= arch_adap_steps
+                ):  # no architecture adap after arch_adap_steps steps
+                    warm_up = 1
+
+                if w_task_lr_scheduler is not None:
+                    w_task_lr_scheduler.step()
+
+                if a_task_lr_scheduler is not None:
+                    a_task_lr_scheduler.step()
+
+                train(
+                    task,
+                    self.model,
+                    self.architect,
+                    self.w_optim,
+                    self.a_optim,
+                    lr,
+                    global_progress,
+                    self.config,
+                    warm_up,
+                )
+
+                if (
+                    model_has_normalizer
+                    and train_step < (arch_adap_steps - 1)
+                    and not warm_up
+                ):  # todo check if not warm_up is correct
+                    self.model.normalizer["params"]["curr_step"] += 1
+                    self.architect.v_net.normalizer["params"]["curr_step"] += 1
 
         w_task = OrderedDict(
             {
@@ -188,13 +281,10 @@ class Darts:
         )
 
         # Log genotype
-        if num_of_sk is not None:
-            genotype = self.model.genotype(switches_normal=switches_normal,
-                                           switches_reduce=switches_reduce,
-                                           limit_skip_connections=num_of_sk)
-        else:
-            genotype = self.model.genotype(switches_normal=switches_normal,
-                                           switches_reduce=switches_reduce)
+        # TODO: Solve the parsing with or without switches
+        # TODO: Do we reduce skip_connections, paper notes only during
+        # evaluation.
+        genotype = self.model.genotype()
 
         if log_alphas:
             alpha_logger["normal_relaxed"].append(
@@ -221,16 +311,26 @@ class Darts:
         if self.config.drop_path_prob > 0.0:
             self.model.drop_path_prob(0.0)
 
-        # Also, remove skip-connection dropouts during evaluation
-        if dropout_sk > 0.0:
-            self.model.drop_out_skip_connections(0.0)
+        # Also, remove skip-connection dropouts during evaluation,
+        # evaluation is on the train-test set.
+        self.model.drop_out_skip_connections(0.0)
 
+        # Evaluate the model on the training-test tasks,
+        # Limit the number of skip-connections
         with torch.no_grad():
             for batch_idx, batch in enumerate(task.test_loader):
 
                 x_test, y_test = batch
                 x_test = x_test.to(self.config.device, non_blocking=True)
                 y_test = y_test.to(self.config.device, non_blocking=True)
+
+                if num_of_skip_connections is not None \
+                        and self.config.use_search_space_regularization:
+                    gt.limit_skip_connections_alphas(
+                        self.model.alpha_normal,
+                        self.primitives, k=2,
+                        nodes=self.config.nodes,
+                        num_of_skip_connections=num_of_skip_connections)
 
                 if isinstance(self.model, SearchCNNController):
                     logits = self.model(
@@ -291,7 +391,6 @@ def train(
     for step, ((train_X, train_y), (val_X, val_y)) in enumerate(
         zip(task.train_loader, task.valid_loader)
     ):
-
         train_X, train_y = train_X.to(config.device), train_y.to(config.device)
         val_X, val_y = val_X.to(config.device), val_y.to(config.device)
         N = train_X.size(0)
@@ -330,6 +429,10 @@ class Architect:
         self.w_momentum = w_momentum
         self.w_weight_decay = w_weight_decay
         self.use_first_order_darts = use_first_order_darts
+
+    def set_network(self, net):
+        self.net = net
+        self.v_net = copy.deepcopy(net)
 
     def virtual_step(self, train_X, train_y, xi, w_optim):
         """

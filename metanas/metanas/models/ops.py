@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from metanas.utils import genotypes as gt
 
-""" Operations 
+""" Operations
 Copyright (c) 2021 Robert Bosch GmbH
 
 This program is free software: you can redistribute it and/or modify
@@ -18,7 +18,7 @@ GNU Affero General Public License for more details.
 
 """
 
-""" 
+"""
 Based on https://github.com/khanrc/pt.darts
 which is licensed under MIT License,
 cf. 3rd-party-licenses.txt in root directory.
@@ -60,6 +60,42 @@ OPS = {
     "conv_3x3": lambda C, stride, affine: DilConv(
         C, C, 3, stride, 1, dilation=1, affine=affine
     ),
+}
+
+OPS_SHARPDARTS = {
+    'none': lambda C, stride, affine: Zero(stride),
+    'avg_pool_3x3': lambda C, stride, affine: ResizablePool(
+        C, C, 3, stride, 1, affine=affine, pool_type=nn.AvgPool2d),
+    'max_pool_3x3': lambda C, stride, affine: ResizablePool(
+        C, C, 3, stride, 1, affine=affine),
+    'skip_connect': lambda C, stride, affine: Identity()
+    if stride == 1
+    else FactorizedReduce(C, C, affine=affine),
+    'sep_conv_3x3': lambda C, stride, affine: SharpSepConv(
+        C, C, 3, stride, 1, affine=affine),
+    'sep_conv_5x5': lambda C, stride, affine: SharpSepConv(
+        C, C, 5, stride, 2, affine=affine),
+    'flood_conv_3x3': lambda C, stride, affine: SharpSepConv(
+        C, C, 3, stride, 2, affine=affine, C_mid_mult=4),
+    'flood_conv_5x5': lambda C, stride, affine: SharpSepConv(
+        C, C, 5, stride, 2, affine=affine, C_mid_mult=4),
+    'sep_conv_7x7': lambda C, stride, affine: SharpSepConv(
+        C, C, 7, stride, 3, affine=affine),
+    'dil_conv_3x3': lambda C, stride, affine: SharpSepConv(
+        C, C, 3, stride, 2, dilation=2, affine=affine),
+    'dil_conv_5x5': lambda C, stride, affine: SharpSepConv(
+        C, C, 5, stride, 4, dilation=2, affine=affine),
+    'conv_7x1_1x7': lambda C, stride, affine: FacConv(
+        C, C, 7, stride, 3, affine=affine
+    ),
+    'dil_flood_conv_3x3': lambda C, stride, affine: SharpSepConv(
+        C, C, 3, stride, 2, dilation=2, affine=affine, C_mid_mult=4),
+    'dil_flood_conv_5x5': lambda C, stride, affine: SharpSepConv(
+        C, C, 5, stride, 2, dilation=2, affine=affine, C_mid_mult=4),
+    'choke_conv_3x3': lambda C, stride, affine, C_mid=32: SharpSepConv(
+        C, C, 3, stride, 1, affine=affine, C_mid=C_mid),
+    'dil_choke_conv_3x3': lambda C, stride, affine, C_mid=32: SharpSepConv(
+        C, C, 3, stride, 2, dilation=2, affine=affine, C_mid=C_mid),
 }
 
 
@@ -136,6 +172,51 @@ class StdConv(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+
+class SharpSepConv(nn.Module):
+    def __init__(self, C_in, C_out, kernel_size, stride,
+                 padding=1, dilation=1, affine=True, C_mid_mult=1, C_mid=None):
+        super(SharpSepConv, self).__init__()
+        cmid = int(C_out * C_mid_mult)
+        cmid = C_mid if C_mid else cmid
+        self.op = nn.Sequential(
+            nn.ReLU(inplace=False),
+            nn.Conv2d(C_in, C_in, kernel_size, stride,
+                      padding, dilation, groups=C_in, bias=0),
+            nn.Conv2d(C_in, cmid, kernel_size=1,
+                      padding=0, bias=0),
+            nn.BatchNorm2d(cmid, affine=affine),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(cmid, cmid, kernel_size,
+                      stride=1, padding=(kernel_size-1)//2,
+                      dilation=1, groups=cmid, bias=0),
+            nn.Conv2d(cmid, C_out, kernel_size=1,
+                      padding=0, bias=0),
+            nn.BatchNorm2d(C_out, affine=affine))
+
+    def forward(self, x):
+        return self.op(x)
+
+
+class ResizablePool(nn.Module):
+
+    def __init__(self, C_in, C_out, kernel_size=3, stride=1, padding=1,
+                 affine=True, pool_type=nn.MaxPool2d):
+        super(ResizablePool, self).__init__()
+        if C_in == C_out:
+            self.op = pool_type(kernel_size=kernel_size,
+                                stride=stride, padding=padding)
+        else:
+            self.op = nn.Sequential(
+                pool_type(kernel_size=kernel_size,
+                          stride=stride, padding=padding),
+                nn.Conv2d(C_in, C_out, 1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(C_out, eps=1e-3, affine=affine)
+            )
+
+    def forward(self, x):
+        return self.op(x)
 
 
 class FacConv(nn.Module):
@@ -262,35 +343,52 @@ class FactorizedReduce(nn.Module):
 
 
 class MixedOp(nn.Module):
-    """ Progressive DARTS Mixed operation """
+    """ Mixed operation """
 
-    def __init__(self, C, stride, PRIMITIVES, switch):
+    def __init__(self, C, stride, PRIMITIVES, primitive_space,
+                 weight_regularization):
         super().__init__()
+        self.weight_regularization = weight_regularization
         self._ops = nn.ModuleList()
 
-        for i in range(len(switch)):
-            if switch[i]:
-                primitive = PRIMITIVES[i]
+        for primitive in PRIMITIVES:
+            if primitive_space == "sharp":
+                op = OPS_SHARPDARTS[primitive](C, stride, affine=False)
+            elif primitive_space == "fewshot":
                 op = OPS[primitive](C, stride, affine=False)
+            else:
+                raise RuntimeError("Primitive space is not supported.")
 
-                # Apply level dropout after each skip-connection. To partially
-                # "cut off" the straight path through skip-connections.
-                if isinstance(op, Identity):
-                    op = nn.Sequential(op, nn.Dropout())
-                else:
-                    op = nn.Sequential(op, DropPath_())
+            # Apply level dropout after each skip-connection. To partially
+            # "cut off" the straight path through skip-connections.
+            if isinstance(op, Identity):
+                op = nn.Sequential(op, nn.Dropout())
+            else:
+                op = nn.Sequential(op, DropPath_())
 
-                self._ops.append(op)
+            self._ops.append(op)
 
     def forward(self, x, weights, alpha_prune_threshold=0.0):
         """
         Args:
             x: input
             weights: weight for each operation
-            alpha_prune_threshold: prune ops during forward pass if alpha
-                below threshold
+            alpha_prune_threshold: prune ops during forward pass
+                if alpha below threshold
         """
-        return sum(
-            w * op(x) for w, op in zip(weights,
-                                       self._ops) if w > alpha_prune_threshold
-        )
+        if self.weight_regularization == "scalar":
+            # for w, op in zip(weights, self._ops):
+            #     print(x.shape)
+            #     print(op)
+            #     w * op(x)
+
+            return sum(
+                w * op(x) for w, op in zip(weights, self._ops)
+                if w > alpha_prune_threshold
+            )
+        elif self.weight_regularization == "max_w":
+            max_w = torch.max(weights)
+            return sum(
+                (1. - max_w + w) * op(x) for w, op in zip(weights, self._ops)
+                if w > alpha_prune_threshold
+            )
