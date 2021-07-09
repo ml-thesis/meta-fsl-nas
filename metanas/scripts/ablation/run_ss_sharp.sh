@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_ssa_train
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/og_train_ss_sharp
 		
 mkdir -p $TRAIN_DIR
 
@@ -28,25 +28,22 @@ args=(
     # test examples per class
     --q 1 \
 
-    # Originally, 0.01 for 30_000 epochs
-    --meta_model_prune_threshold 0.001 \
-    --alpha_prune_threshold 0.001 \
+    --meta_model_prune_threshold 0.01 \
+    --alpha_prune_threshold 0.01 \
     # Meta Learning
     --meta_model searchcnn \
-    # Repeated every stage, e.g. 3 times
-    --meta_epochs 25 \
-    --warm_up_epochs 10 \
+    --meta_epochs 75 \
+    --warm_up_epochs 35 \
     --use_pairwise_input_alphas \
+
     --eval_freq 15 \
     --eval_epochs 5 \
-
     --print_freq 5 \
 
     --normalizer softmax \
     --normalizer_temp_anneal_mode linear \
     --normalizer_t_min 0.05 \
     --normalizer_t_max 1.0 \
-    # Originally, 0.3 in metaNAS
     --drop_path_prob 0.2 \
 
     # Architectures
@@ -57,12 +54,8 @@ args=(
     --use_first_order_darts \
     --use_torchmeta_loader \
 
-    # P-DARTS
-    --use_search_space_approximation \
-
-    --add_layers 5 \
-    --add_init_channels 12 \
-    --limit_skip_connections 2 \
+    # P-DARTS & sharpDARTS
+    --primitives_type sharp \
 )
 
 

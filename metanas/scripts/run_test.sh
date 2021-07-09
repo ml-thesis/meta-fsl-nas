@@ -56,8 +56,9 @@ args=(
     --use_torchmeta_loader \
 
     # P-DARTS
-    --use_search_space_approximation \
+    # --use_search_space_approximation \
     --use_search_space_regularization \
+    --limit_skip_connections 2 \
 
 )
 

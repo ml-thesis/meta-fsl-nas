@@ -1,7 +1,18 @@
 #!/bin/bash
 
 echo "Start run of ablation studies omitting, search space approximation and regularization"
-sh ./run_og_ssa_meta_train.sh
 
-sh ./run_og_ssr_meta_train.sh
+# MetaNAS
+bash ./scripts/ablation/run_cutout.sh
+bash ./scripts/ablation/run_metanas.sh
 
+# SharpDARTS
+# bash ./scripts/ablation/run_sharp.sh
+bash ./scripts/ablation/run_alpha_reg.sh
+bash ./scripts/ablation/run_ss_sharp.sh
+
+# P-DARTS
+bash ./scripts/ablation/run_ssa.sh
+bash ./scripts/ablation/run_reinitialize_ssa.sh
+bash ./scripts/ablation/run_ssr.sh
+bash ./scripts/ablation/run_pdarts.sh
