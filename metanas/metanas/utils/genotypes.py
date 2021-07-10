@@ -128,6 +128,26 @@ PRIMITIVES_FEWSHOT = [
 ]
 
 
+PRIMITIVES_SHARP = [
+    "avg_pool_3x3",
+    "max_pool_3x3",
+    "skip_connect",
+    "sep_conv_3x3",
+    # "sep_conv_5x5", # memory issue
+    # "flood_conv_3x3",
+    # "flood_conv_5x5",
+    "sep_conv_7x7",
+    "dil_conv_3x3",
+    # "dil_conv_5x5", # memory issue
+    "conv_7x1_1x7",
+    # "dil_flood_conv_3x3",
+    # "dil_flood_conv_5x5",
+    "choke_conv_3x3",
+    "dil_choke_conv_3x3",
+    # "none",  # remove
+]
+
+
 def to_dag(C_in, gene, reduction):
     """ generate discrete ops from gene """
     dag = nn.ModuleList()
@@ -271,222 +291,6 @@ def parse_pairwise(alpha, alpha_pairwise, primitives=PRIMITIVES_FEWSHOT):
     return gene
 
 
-"""P-DARTS, addition of parsing the alphas including the switches
-"""
-
-
-def parse_switches(alpha, switches, k, primitives=PRIMITIVES_FEWSHOT):
-    """
-    parse continuous alpha to discrete gene.
-    alpha is ParameterList:
-    ParameterList [
-        Parameter(n_edges1, n_ops),
-        Parameter(n_edges2, n_ops),
-        ...
-    ]
-
-    gene is list:
-    [
-        [('node1_ops_1', node_idx), ..., ('node1_ops_k', node_idx)],
-        [('node2_ops_1', node_idx), ..., ('node2_ops_k', node_idx)],
-        ...
-    ]
-    each node has two edges (k=2) in CNN.
-    """
-    gene = []
-    j = 0
-
-    for edges in alpha:
-        # These primitive indices don't correspond to the actual
-        # primitive. k=1 here.
-        edge_max, primitive_indices = torch.topk(edges[:, :], 1)
-        topk_edge_values, topk_edge_indices = torch.topk(edge_max.view(-1), k)
-
-        # Primitive indices which are enabled
-        primitives_enabled = []
-        for _ in range(len(edges)):
-            prim_enabled_indices = np.where(switches[j])[0]
-            # The primitive operations which are enabled
-            primitives_enabled.append([
-                primitives[i] for i in prim_enabled_indices])
-            j += 1
-
-        # For each edge the highest alpha primitive indice
-        node_gene = []
-        for edge_idx in topk_edge_indices:
-            prim_idx = primitive_indices[edge_idx]
-            prim = primitives_enabled[edge_idx][prim_idx[0]]
-            node_gene.append((prim, edge_idx.item()))
-
-        gene.append(node_gene)
-    return gene
-
-
-def limit_skip_connections(alphas, switches, num_of_sk=2, nodes=3,
-                           k=2, primitives=PRIMITIVES_FEWSHOT):
-    sk_idx = primitives.index("skip_connect")
-
-    alphas_np = [a.cpu().detach().numpy() for a in alphas]
-    alpha_concat = np.concatenate(alphas_np, axis=0)
-
-    # skip-connections alpha indices
-    # edge index, skip-connection alpha_index
-    sk_indices = []
-    # alphas corresponding to the skip-connections
-    sk_alphas = []
-    for i, sw in enumerate(switches):
-        prim_indices = np.where(sw)[0]
-        # skip-connection index of alpha
-        sk_index = np.where(prim_indices == sk_idx)[0].tolist()
-        sk_indices.append([i, sk_index])
-
-        if len(sk_index) > 0:
-            sk_alphas.append(alpha_concat[i][sk_index][0])
-        else:  # If the skip-connection is not enabled, set to infinity.
-            sk_alphas.append(float("inf"))
-
-    # Number of skip-connections enabled in switches based
-    # on the gene
-    gene = parse_switches(alphas, switches, k=k)
-    num_sk_enabled = sum([1 for edge in gene
-                          for op in edge if op[0] == "skip_connect"])
-
-    sk_a = np.array(sk_alphas)
-
-    if num_sk_enabled < num_of_sk:
-        alphas = convert_tensor_alphas(alpha_concat)
-        gene = parse_switches(alphas, switches, k=k)
-        return gene
-
-    while num_sk_enabled > num_of_sk:
-        # Pick skip-connection index with lowest alpha
-        # value
-        idx = np.argmin(sk_a)
-        sk_a[idx] = float("inf")
-
-        # row index and alpha index
-        row_idx, alpha_idx = sk_indices[idx][0], sk_indices[idx][1][0]
-
-        # set alphas to -inf to make sure, prevent it from
-        # being picked.
-        alpha_concat[row_idx][alpha_idx] = float("-inf")
-        alphas = convert_tensor_alphas(alpha_concat, nodes)
-
-        gene = parse_switches(alphas, switches, k=k)
-        num_sk_enabled = sum([1 for edge in gene
-                              for op in edge if op[0] == "skip_connect"])
-
-        if num_sk_enabled <= num_of_sk:
-            return gene
-
-
-def limit_skip_connections_pw(alphas, alphas_pairwise, switches, num_of_sk=2,
-                              nodes=3, primitives=PRIMITIVES_FEWSHOT):
-    sk_idx = primitives.index("skip_connect")
-
-    alphas_np = [a.cpu().detach().numpy() for a in alphas]
-    alpha_concat = np.concatenate(alphas_np, axis=0)
-
-    # skip-connections alpha indices
-    # edge index, skip-connection alpha_index
-    sk_indices = []
-    # alphas corresponding to the skip-connections
-    sk_alphas = []
-    for i, sw in enumerate(switches):
-        prim_indices = np.where(sw)[0]
-        # skip-connection index of alpha
-        sk_index = np.where(prim_indices == sk_idx)[0].tolist()
-        sk_indices.append([i, sk_index])
-
-        if len(sk_index) > 0:
-            sk_alphas.append(alpha_concat[i][sk_index][0])
-        else:  # If the skip-connection is not enabled, set to infinity.
-            sk_alphas.append(float("inf"))
-
-    # Number of skip-connections enabled in switches based
-    # on the gene
-    gene = parse_pairwise_switches(alphas, alphas_pairwise, switches)
-    num_sk_enabled = sum([1 for edge in gene
-                          for op in edge if op[0] == "skip_connect"])
-
-    sk_a = np.array(sk_alphas)
-
-    if num_sk_enabled < num_of_sk:
-        alphas = convert_tensor_alphas(alpha_concat)
-        gene = parse_pairwise_switches(alphas, alphas_pairwise, switches)
-        return gene
-
-    while num_sk_enabled > num_of_sk:
-        # Pick skip-connection index with lowest alpha
-        # value
-        idx = np.argmin(sk_a)
-        sk_a[idx] = float("inf")
-
-        # row index and alpha index
-        row_idx, alpha_idx = sk_indices[idx][0], sk_indices[idx][1][0]
-
-        # set alphas to -inf to make sure, prevent it from
-        # being picked.
-        alpha_concat[row_idx][alpha_idx] = float("-inf")
-        alphas = convert_tensor_alphas(alpha_concat, nodes)
-
-        gene = parse_pairwise_switches(alphas, alphas_pairwise, switches)
-        num_sk_enabled = sum([1 for edge in gene
-                              for op in edge if op[0] == "skip_connect"])
-
-        if num_sk_enabled <= num_of_sk:
-            return gene
-
-
-def parse_pairwise_switches(alpha, alpha_pairwise, switches,
-                            primitives=PRIMITIVES_FEWSHOT):
-    # get sparse alpha pw
-    alpha_pairwise = search_cnn.sparsify_pairwise_alphas(alpha_pairwise)
-    gene = []
-    j = 0
-
-    # iterate through nodes
-    for edges, pw_edges in zip(alpha, alpha_pairwise):
-        # edge_i: int
-        # edges: Tensor(n_edges, n_ops)
-        # pw_edges: Tensor(n_input_nodes)
-
-        # find strongest edge for each input
-        # These primitive indices don't correspond to the actual
-        # primitive indices due to the switches. k=1 here.
-        edge_max, primitive_indices = torch.topk(edges[:, :], 1)
-        node_gene = []
-
-        top_inputs = []
-        pw_idx = 0  # find the best two inputs from pairwise alphas
-
-        # iterate through possible inputs and check which to use
-        # (correct one = only combination without zero alpha)
-        for input_1 in range(len(edges)):
-            for input_2 in range(input_1 + 1, len(edges)):
-                if pw_edges[pw_idx] > 0:
-                    top_inputs = torch.tensor([input_1, input_2])
-                pw_idx = pw_idx + 1
-
-        # Primitive indices which are enabled, to correspond
-        # with primitive_indices
-        primitives_enabled = []
-        for _ in range(len(edges)):
-            prim_enabled_indices = np.where(switches[j])[0]
-            # The primitive operations which are enabled
-            primitives_enabled.append([
-                primitives[i] for i in prim_enabled_indices])
-            j += 1
-
-        for edge_idx in top_inputs:
-            prim_idx = primitive_indices[edge_idx]
-            prim = primitives_enabled[edge_idx][prim_idx[0]]
-            node_gene.append((prim, edge_idx.item()))
-
-        gene.append(node_gene)
-    return gene
-
-
 def convert_tensor_alphas(alpha_concat, nodes=3):
     alphas = []
     for a_i in get_edge_indices(nodes):
@@ -511,3 +315,123 @@ def get_edge_indices(nodes=3):
             indices.append((0, sum(j[:j.index(i)+1])))
         prev = i
     return indices
+
+
+def find_indice(row_idx, nodes=3):
+    edges = get_edge_indices(nodes)
+
+    for i, (lower, upper) in enumerate(edges):
+        if row_idx >= lower and row_idx <= upper:
+            # return index
+            idx_alpha = 0 if row_idx-lower == 0 else row_idx-lower-1
+            return i, idx_alpha
+
+
+def limit_skip_connections(alphas, primitives, k=2,
+                           num_of_skip_connections=2):
+    sk_idx = primitives.index("skip_connect")
+
+    # Number of skip-connections enabled in switches
+    gene = parse(alphas, k)
+
+    alphas = [a.detach().cpu().numpy() for a in alphas]
+    alpha_concat = np.concatenate(alphas, axis=0)
+
+    num_sk_enabled = sum([1 for edge in gene
+                          for op in edge if op[0] == "skip_connect"])
+
+    sk_a = alpha_concat[:, sk_idx-1:sk_idx]
+    if num_sk_enabled < num_of_skip_connections:
+        alphas = convert_tensor_alphas(alpha_concat)
+        gene = parse(alphas, k)
+        return gene
+    else:
+        while num_sk_enabled > num_of_skip_connections:
+            # Pick skip-connection index with lowest alpha
+            # value
+            row_idx = np.argmin(sk_a)
+            sk_a[row_idx] = float("inf")
+
+        #     # set alphas to -inf to make sure, prevent it from
+        #     # being picked.
+            alpha_concat[row_idx][sk_idx] = float("-inf")
+            alphas = convert_tensor_alphas(alpha_concat)
+
+            gene = parse(alphas, k)
+            num_sk_enabled = sum([1 for edge in gene
+                                  for op in edge if op[0] == "skip_connect"])
+
+            if num_sk_enabled <= num_of_skip_connections:
+                # return the new switches
+                return gene
+
+
+def limit_skip_connections_pw(alphas, alphas_pairwise, primitives,
+                              num_of_skip_connections=2):
+    sk_idx = primitives.index("skip_connect")
+
+    # Number of skip-connections enabled in switches
+    gene = parse_pairwise(alphas, alphas_pairwise)
+
+    alphas = [a.detach().cpu().numpy() for a in alphas]
+    alpha_concat = np.concatenate(alphas, axis=0)
+
+    num_sk_enabled = sum([1 for edge in gene
+                          for op in edge if op[0] == "skip_connect"])
+
+    sk_a = alpha_concat[:, sk_idx-1:sk_idx]
+    if num_sk_enabled < num_of_skip_connections:
+        alphas = convert_tensor_alphas(alpha_concat)
+        gene = parse_pairwise(alphas, alphas_pairwise)
+        return gene
+    else:
+        while num_sk_enabled > num_of_skip_connections:
+            # Pick skip-connection index with lowest alpha
+            # value
+            row_idx = np.argmin(sk_a)
+            sk_a[row_idx] = float("inf")
+
+        #     # set alphas to -inf to make sure, prevent it from
+        #     # being picked.
+            alpha_concat[row_idx][sk_idx] = float("-inf")
+            alphas = convert_tensor_alphas(alpha_concat)
+
+            gene = parse_pairwise(alphas, alphas_pairwise)
+            num_sk_enabled = sum([1 for edge in gene
+                                  for op in edge if op[0] == "skip_connect"])
+
+            if num_sk_enabled <= num_of_skip_connections:
+                # return the new switches
+                return gene
+
+
+def limit_skip_connections_alphas(alpha, primitives, k=2, nodes=3,
+                                  num_of_skip_connections=2):
+    """Mutate the alpha in-place and return the corresponding gene"""
+    gene = parse(alpha, k=k)
+    num_sk_enabled = sum([1 for edge in gene
+                          for op in edge if op[0] == "skip_connect"])
+
+    if num_sk_enabled < num_of_skip_connections:
+        return gene
+    else:
+        sk_idx = primitives.index("skip_connect")
+        alphas_concat = np.concatenate(
+            [a.detach().cpu().numpy() for a in alpha],
+            axis=0)
+        sk_alphas = alphas_concat[:, sk_idx-1:sk_idx]
+
+        for i in range(len(sk_alphas)):
+            # Pick skip-connection index with lowest alpha value
+            row_idx = np.argmin(sk_alphas)
+            # Set to inf so we don't pick this again
+            sk_alphas[row_idx] = float("inf")
+
+            edge_idx, row_idx = find_indice(row_idx, nodes)
+            alpha[edge_idx][row_idx][sk_idx] = 0
+            gene = parse(alpha, k=k)
+
+            num_sk_enabled = sum([1 for edge in gene
+                                  for op in edge if op[0] == "skip_connect"])
+            if num_sk_enabled < num_of_skip_connections:
+                return gene

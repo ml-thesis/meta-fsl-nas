@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_train_max_w
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/og_train_metanas
 		
 mkdir -p $TRAIN_DIR
 
@@ -22,7 +22,7 @@ args=(
 
     # few shot params
      # examples per class
-    --n 1 \
+    --n 5 \
     # number classes
     --k 20 \
     # test examples per class
@@ -53,14 +53,6 @@ args=(
     --reduction_layers 1 3 \
     --use_first_order_darts \
     --use_torchmeta_loader \
-
-    # P-DARTS & sharpDARTS
-    # --use_search_space_approximation \
-
-    # --use_search_space_regularization \
-    # --limit_skip_connections 2 \
-
-    --darts_regularization max_w \
 )
 
 

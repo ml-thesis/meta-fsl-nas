@@ -36,7 +36,6 @@ cf. 3rd-party-licenses.txt in root directory.
 
 
 def SoftMax(logits, params, dim=-1):
-
     # temperature annealing
     if params["temp_anneal_mode"] == "linear":
         # linear temperature annealing (Note: temperature -> zero
@@ -44,7 +43,7 @@ def SoftMax(logits, params, dim=-1):
         temperature = params["t_max"] - params["curr_step"] * (
             params["t_max"] - params["t_min"]
         ) / (params["max_steps"] - 1)
-        assert temperature > 0
+        assert temperature > 0, (logits, params)
     else:
         temperature = 1.0
     return F.softmax(logits / temperature, dim=dim)
@@ -88,15 +87,22 @@ class SearchCNNController(nn.Module):
         device_ids=None,
         normalizer=dict(),
         PRIMITIVES=None,
-        switches_normal=None,  # P-DARTS variables
-        switches_reduce=None,
         feature_scale_rate=2,
+        primitive_space="sharp",
+        weight_regularization="scalar",
         use_hierarchical_alphas=False,  # deprecated
         use_pairwise_input_alphas=False,
         alpha_prune_threshold=0.0,
     ):
         super().__init__()
+        self.C = C
+        self.C_in = C_in
         self.n_nodes = n_nodes
+        self.n_classes = n_classes
+        self.reduction_layers = reduction_layers
+        self.stem_multiplier = stem_multiplier
+        self.feature_scale_rate = feature_scale_rate
+
         self.criterion = nn.CrossEntropyLoss()
         self.use_pairwise_input_alphas = use_pairwise_input_alphas
         self.use_hierarchical_alphas = use_hierarchical_alphas
@@ -122,11 +128,10 @@ class SearchCNNController(nn.Module):
 
         # initialize architect parameters: alphas
         if PRIMITIVES is None:
-            PRIMITIVES = gt.PRIMITIVES
-        self.primitives = PRIMITIVES
+            raise RuntimeError("PRIMITIVES not defined")
 
-        # P-DARTS, checks how many ops to enable
-        n_ops = sum(list(map(int, switches_normal[0])))
+        self.primitives = PRIMITIVES
+        n_ops = len(PRIMITIVES)
 
         # UNAS adjustments to sample alphas by REINFORCE gradient
         # estimator
@@ -135,11 +140,12 @@ class SearchCNNController(nn.Module):
 
         for i in range(n_nodes):
             # create alpha parameters over parallel operations,
-            # note the requires_grad
+            # note the requires_grad only for UNAS
+            # # , requires_grad=True
             self.alpha_normal.append(nn.Parameter(
-                1e-3 * torch.randn(i + 2, n_ops, requires_grad=True)))
+                1e-3 * torch.randn(i + 2, n_ops)))
             self.alpha_reduce.append(nn.Parameter(
-                1e-3 * torch.randn(i + 2, n_ops, requires_grad=True)))
+                1e-3 * torch.randn(i + 2, n_ops)))
 
         assert not (
             use_hierarchical_alphas and use_pairwise_input_alphas
@@ -191,11 +197,16 @@ class SearchCNNController(nn.Module):
             n_nodes,
             reduction_layers,
             stem_multiplier,
+            primitive_space,
+            weight_regularization,
             PRIMITIVES=self.primitives,
-            switches_normal=switches_normal,
-            switches_reduce=switches_reduce,
             feature_scale_rate=feature_scale_rate,
         )
+
+    def reinit_search_model(self):
+        for layer in self.net.cells.children():
+            if hasattr(layer, 'reset_parameters'):
+                layer.reset_parameters()
 
     def apply_normalizer(self, alpha):
         return self.normalizer["func"](alpha, self.normalizer["params"])
@@ -240,68 +251,13 @@ class SearchCNNController(nn.Module):
         alphas = [self.apply_normalizer(alpha) for alpha in alphas]
         return alphas
 
-    def set_alphas(self, alpha_normal, alpha_reduce):
-        """We set the alphas"""
-        # TODO: Set values of module differently
-        print(alpha_normal[0])
-        for i, (r, n) in enumerate(zip(alpha_reduce, alpha_normal)):
-            self.alpha_normal[i].data = r
-            self.alpha_reduce[i].data = n
-
-    def reduce_operations(self, config, current_stage):
-        """P-DARTS, Obtain alpha weights to reduce the operations by the
-        specified amount for the current stage.
-
-        TODO: Can we consider the pairwise alphas here as well?
-        """
-        switches_normal = copy.deepcopy(config.switches_normal)
-        switches_reduce = copy.deepcopy(config.switches_reduce)
-
-        # Add again if we consider the None operations
-        # last_stage = current_stage == config.architecture_stages
-
-        # Number of operations to drop, -1 for the index
-        ops_drop = config.drop_number_operations[current_stage-1]
-
-        weights_normal = [self.apply_normalizer(
-            alpha).data.cpu().numpy() for alpha in self.alpha_normal]
-        weights_reduce = [self.apply_normalizer(
-            alpha).data.cpu().numpy() for alpha in self.alpha_reduce]
-
-        weights_normal = np.concatenate(weights_normal, axis=0)
-        weights_reduce = np.concatenate(weights_reduce, axis=0)
-
-        switches_reduce = self._adjust_switches(weights_reduce,
-                                                switches_reduce,
-                                                ops_drop, config.edges)
-
-        switches_normal = self._adjust_switches(weights_normal,
-                                                switches_normal,
-                                                ops_drop, config.edges)
-        return switches_normal, switches_reduce
-
-    def _adjust_switches(self, weights, switches, ops_drop,
-                         edges):
-        """Original P-DARTS, There are 4 intermediate nodes in a cell,
-        resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
-        number of edges in a cell."""
-
-        for i in range(edges):
-            idxs = np.where(switches[i])[0].tolist()
-
-            # If None in primitives, add check for this operation
-            # if last_stage:
-            #     # for the last stage, drop all Zero operations
-            #     drop = self._get_min_k_no_zero(
-            #         weights[i, :], idxs, ops_drop)
-            # else:
-
-            # get minimum k (ops_drop) from the weights
-            # original code, drop = get_min_k(prob[i, :], ops_drop)
-            drop = np.array(weights[i, :]).argsort()[:ops_drop]
-            for idx in drop:
-                switches[i][idxs[idx]] = False
-        return switches
+    # def set_alphas(self, alpha_normal, alpha_reduce):
+    #     """We set the alphas"""
+    #     # TODO: Set values of module differently
+    #     print(alpha_normal[0])
+    #     for i, (r, n) in enumerate(zip(alpha_reduce, alpha_normal)):
+    #         self.alpha_normal[i].data = r
+    #         self.alpha_reduce[i].data = n
 
     def prune_alphas(self, prune_threshold=0.0, val=-10e8):
         """Set the alphas with probability below prune_threshold to a
@@ -529,8 +485,6 @@ class SearchCNNController(nn.Module):
         """P-DARTS, set the Dropout variable for nn.Dropout after
         the skip-connection instead of DropPath
         """
-        self.dropout_skip_connections = p
-
         for module in self.net.modules():
             if isinstance(module, nn.Dropout):
                 module.p = p
@@ -646,14 +600,12 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, switches_normal, switches_reduce,
-                 limit_skip_connections=None):
-        """Generate genotype based on current weights and switches
+    def genotype(self, limit_skip_connections=None):
+        """Generate genotype based on current weights
+        TODO: Implement limit skip-connections without switches + Testing
         """
-
-        # The pairwise alphas can't work together with turning off ops
         if self.use_pairwise_input_alphas:
-            # Original implementation uses, gt.parse_pairwise
+
             weights_pw_normal = [
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_normal
             ]
@@ -661,42 +613,34 @@ class SearchCNNController(nn.Module):
                 F.softmax(alpha, dim=-1) for alpha in self.alpha_pw_reduce
             ]
 
-            gene_normal = gt.parse_pairwise_switches(
-                self.alpha_normal, weights_pw_normal, switches_normal,
-                primitives=self.primitives
+            gene_normal = gt.parse_pairwise(
+                self.alpha_normal, weights_pw_normal, primitives=self.primitives
             )
-            gene_reduce = gt.parse_pairwise_switches(
-                self.alpha_reduce, weights_pw_reduce, switches_reduce,
-                primitives=self.primitives
+            gene_reduce = gt.parse_pairwise(
+                self.alpha_reduce, weights_pw_reduce, primitives=self.primitives
             )
 
             # Limiting the skip connections, only applies to the normal cell.
             if limit_skip_connections is not None:
                 gene_normal = gt.limit_skip_connections_pw(
-                    self.alpha_normal, weights_pw_normal, switches_normal,
-                    num_of_sk=limit_skip_connections,
-                    nodes=self.n_nodes,
-                    primitives=self.primitives)
+                    self.alpha_normal, weights_pw_normal,
+                    primitives=self.primitives,
+                    num_of_skip_connections=limit_skip_connections)
 
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
         else:
-            # Original implementation without switches for operations,
-            # and without pairwise (beta) alphas using gt.parse.
-            gene_normal = gt.parse_switches(
-                self.alpha_normal, switches_normal, k=2,
-                primitives=self.primitives)
-            gene_reduce = gt.parse_switches(
-                self.alpha_reduce, switches_normal, k=2,
-                primitives=self.primitives)
+            gene_normal = gt.parse(
+                self.alpha_normal, k=2, primitives=self.primitives)
+            gene_reduce = gt.parse(
+                self.alpha_reduce, k=2, primitives=self.primitives)
 
             # Limiting the skip connections, only applies to the normal cell.
             if limit_skip_connections is not None:
                 gene_normal = gt.limit_skip_connections(
-                    self.alpha_normal, switches_normal, k=2,
-                    num_of_sk=limit_skip_connections,
-                    nodes=self.n_nodes,
-                    primitives=self.primitives)
+                    self.alpha_normal,
+                    self.primitives, k=2,
+                    num_of_skip_connections=limit_skip_connections)
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 
@@ -746,10 +690,10 @@ class SearchCNN(nn.Module):
         n_nodes=4,
         reduction_layers=[],
         stem_multiplier=3,
+        primitive_space="fewshot",
+        weight_regularization="scalar",
         PRIMITIVES=None,
-        feature_scale_rate=2,
-        switches_normal=None,  # P-DARTS variables
-        switches_reduce=None
+        feature_scale_rate=2
     ):
         """
         Args:
@@ -791,16 +735,15 @@ class SearchCNN(nn.Module):
             if i in reduction_layers:
                 C_cur *= feature_scale_rate
                 reduction = True
-                cell = SearchCell(n_nodes, C_pp, C_p, C_cur, reduction_p,
-                                  reduction, PRIMITIVES, switches_reduce)
             else:
                 reduction = False
-                cell = SearchCell(n_nodes, C_pp, C_p, C_cur, reduction_p,
-                                  reduction, PRIMITIVES, switches_normal)
 
+            cell = SearchCell(
+                n_nodes, C_pp, C_p, C_cur, reduction_p, reduction, PRIMITIVES,
+                primitive_space, weight_regularization
+            )
             reduction_p = reduction
             self.cells.append(cell)
-
             C_cur_out = C_cur * n_nodes
             C_pp, C_p = C_p, C_cur_out
 
@@ -983,7 +926,7 @@ class SearchCell(nn.Module):
     """
 
     def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction,
-                 PRIMITIVES, switches):
+                 PRIMITIVES, primitive_space, weight_regularization):
         """
         Args:
             n_nodes: Number of intermediate n_nodes. The output of the
@@ -1012,17 +955,15 @@ class SearchCell(nn.Module):
 
         # generate dag
         self.dag = nn.ModuleList()
-        switch_count = 0
         for i in range(self.n_nodes):
             self.dag.append(nn.ModuleList())
             for j in range(2 + i):  # include 2 input nodes
                 # reduction should be used only for input node
                 stride = 2 if reduction and j < 2 else 1
 
-                # Double check pass switches from P-DARTS,
-                op = ops.MixedOp(C, stride, PRIMITIVES, switches[switch_count])
+                op = ops.MixedOp(C, stride, PRIMITIVES, primitive_space,
+                                 weight_regularization)
                 self.dag[i].append(op)
-                switch_count += 1
 
     def forward(
         self, s0, s1, w_dag, w_input=None, w_pw=None, alpha_prune_threshold=0.0
