@@ -79,6 +79,17 @@ def meta_architecture_search(
     else:
         raise RuntimeError("Other data loaders deprecated.")
 
+    if config.dataset == "omniglot":
+        task_distribution_class = OmniglotFewShot
+    elif config.dataset == "miniimagenet":
+        task_distribution_class = miniImageNetFewShot
+    elif config.dataset == "triplemnist":
+        task_distribution_class = TripleMNISTFewShot
+    elif config.dataset == "mixedomniglottriplemnist":
+        task_distribution_class = MixedOmniglotTripleMNISTFewShot
+    else:
+        raise RuntimeError(f"Dataset {config.dataset} is not supported.")
+
     # P-DARTS
     # If Search Space Regularization is disabled, we don't limit
     # skip-connections during train-test or meta-testing phase
@@ -93,17 +104,6 @@ def meta_architecture_search(
     else:
         raise RuntimeError(
             f"This f{config.primitives_type} set is not supported.")
-
-    if config.dataset == "omniglot":
-        task_distribution_class = OmniglotFewShot
-    elif config.dataset == "miniimagenet":
-        task_distribution_class = miniImageNetFewShot
-    elif config.dataset == "triplemnist":
-        task_distribution_class = TripleMNISTFewShot
-    elif config.dataset == "mixedomniglottriplemnist":
-        task_distribution_class = MixedOmniglotTripleMNISTFewShot
-    else:
-        raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
     # task distribution
     # Adjusted to download=True, to force the download, this doesn't
@@ -146,13 +146,12 @@ def meta_architecture_search(
     train_info = dict()  # this is added to the experiment.pickle
 
     if not config.eval:
-        config, meta_model, task_optimizer, train_info = train(
+        config, meta_model, train_info = train(
             config,
             meta_model,
             task_distribution,
             task_optimizer,
             meta_optimizer,
-            normalizer,
             train_info,
         )
 
@@ -386,7 +385,6 @@ def train(
     task_distribution,
     task_optimizer,
     meta_optimizer,
-    normalizer=None,
     train_info=None
 ):
     """Meta-training loop
@@ -438,6 +436,7 @@ def train(
     )
 
     for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
+
         time_es = time.time()
         meta_train_batch = task_distribution.sample_meta_train()
         time_samp = time.time()
@@ -598,7 +597,7 @@ def train(
     pickle_to_file(experiment, os.path.join(config.path, "experiment.pickle"))
     pickle_to_file(config, os.path.join(config.path, "config.pickle"))
 
-    return config, meta_model, task_optimizer, train_info
+    return config, meta_model, train_info
 
 
 def pickle_to_file(var, file_path):

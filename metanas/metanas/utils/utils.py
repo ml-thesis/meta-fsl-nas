@@ -82,7 +82,7 @@ def set_hyperparameter(config):
         config.task_train_steps = 5
         # Lowered, to keep evaluation short,
         # on large experiments keep 50
-        config.test_task_train_steps = 5
+        # config.test_task_train_steps = 5
         config.n_train = 15
         config.batch_size = 20
         config.batch_size_test = 10

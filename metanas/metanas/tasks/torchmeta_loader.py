@@ -372,7 +372,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
                 self.download,
                 self.use_vinyals_split,
                 seed=self.seed,
-                cutout=cutout,
+                cutout=False,  # Only use cutout for training or test
             )
             self.val_it = iter(self.val_loader)
 
@@ -388,7 +388,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
             self.download,
             self.use_vinyals_split,
             seed=self.seed,
-            cutout=cutout,
+            cutout=False,  # Only use cutout for training or test
         )
         self.test_it = iter(self.test_loader)
 

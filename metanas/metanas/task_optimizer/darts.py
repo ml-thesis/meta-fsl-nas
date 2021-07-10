@@ -33,6 +33,7 @@ class Darts:
         self.config = config
         self.model = model
         self.primitives = config.primitives
+
         self.do_schedule_lr = do_schedule_lr
         self.task_train_steps = config.task_train_steps
         self.test_task_train_steps = config.test_task_train_steps
@@ -74,7 +75,11 @@ class Darts:
         log_alphas = False
 
         # P-DARTS stages
-        stages = self.config.architecture_stages
+        if self.config.use_search_space_approximation or \
+                self.config.use_search_space_regularization:
+            stages = self.config.architecture_stages
+        else:
+            stages = 1
 
         if test_phase:
             top1_logger = self.config.top1_logger_test
@@ -131,16 +136,16 @@ class Darts:
             if not test_phase or self.config.use_drop_path_in_meta_testing:
                 self.model.drop_path_prob(self.config.drop_path_prob)
 
-        # P-DARTS
-        # addition of staging (G_k) for Search Space Approximation and
-        # Regularization.
-        scale_factor = self.config.dropout_scale_factor
-
-        # For softmax temperature
-        global_train_steps = 0
-
         if self.config.use_search_space_approximation or \
                 self.config.use_search_space_regularization:
+
+            # P-DARTS
+            # addition of staging (G_k) for Search Space Approximation and
+            # Regularization.
+            scale_factor = self.config.dropout_scale_factor
+
+            # For softmax temperature
+            global_train_steps = 0
             for current_stage in range(self.config.architecture_stages):
 
                 # Number of ops to preserve

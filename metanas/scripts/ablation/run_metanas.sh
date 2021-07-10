@@ -22,7 +22,7 @@ args=(
 
     # few shot params
      # examples per class
-    --n 5 \
+    --n 1 \
     # number classes
     --k 20 \
     # test examples per class
