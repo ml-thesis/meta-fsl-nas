@@ -644,7 +644,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     else:
         alpha_logger = None
 
-    for eval_epoch in range(config.eval_epochs):
+    # TODO: Shorten for ablation studies, config.eval_epochs):
+    for eval_epoch in range(5):
 
         meta_test_batch = task_distribution.sample_meta_test()
 

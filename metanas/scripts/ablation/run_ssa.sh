@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/og_train_ssa
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/og_train_ssa_v2
 		
 mkdir -p $TRAIN_DIR
 

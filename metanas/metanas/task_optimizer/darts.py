@@ -61,6 +61,61 @@ class Darts:
             self.config.use_first_order_darts,
         )
 
+    # def reduce_operations(self, config, current_stage,
+    #                       alpha_normal, alpha_reduce):
+    #     """P-DARTS, Obtain alpha weights to reduce the operations by the
+    #     specified amount for the current stage.
+    #     TODO: Can we consider the pairwise alphas here as well?
+    #     """
+    #     switches_normal = copy.deepcopy(config.switches_normal)
+    #     switches_reduce = copy.deepcopy(config.switches_reduce)
+
+    #     # Add again if we consider the None operations
+    #     # last_stage = current_stage == config.architecture_stages
+
+    #     # Number of operations to drop, -1 for the index
+    #     ops_drop = config.drop_number_operations[current_stage-1]
+
+    #     weights_normal = [self.apply_normalizer(
+    #         alpha).data.cpu().numpy() for alpha in self.alpha_normal]
+    #     weights_reduce = [self.apply_normalizer(
+    #         alpha).data.cpu().numpy() for alpha in self.alpha_reduce]
+
+    #     weights_normal = np.concatenate(weights_normal, axis=0)
+    #     weights_reduce = np.concatenate(weights_reduce, axis=0)
+
+    #     switches_reduce = self._adjust_switches(weights_reduce,
+    #                                             switches_reduce,
+    #                                             ops_drop, config.edges)
+
+    #     switches_normal = self._adjust_switches(weights_normal,
+    #                                             switches_normal,
+    #                                             ops_drop, config.edges)
+    #     return switches_normal, switches_reduce
+
+    # def _adjust_switches(self, weights, switches, ops_drop,
+    #                      edges):
+    #     """Original P-DARTS, There are 4 intermediate nodes in a cell,
+    #     resulting in 2 + 3 + 4 + 5 = 14 edges. So 14 indicates the
+    #     number of edges in a cell."""
+
+    #     for i in range(edges):
+    #         idxs = np.where(switches[i])[0].tolist()
+
+    #         # If None in primitives, add check for this operation
+    #         # if last_stage:
+    #         #     # for the last stage, drop all Zero operations
+    #         #     drop = self._get_min_k_no_zero(
+    #         #         weights[i, :], idxs, ops_drop)
+    #         # else:
+
+    #         # get minimum k (ops_drop) from the weights
+    #         # original code, drop = get_min_k(prob[i, :], ops_drop)
+    #         drop = np.array(weights[i, :]).argsort()[:ops_drop]
+    #         for idx in drop:
+    #             switches[i][idxs[idx]] = False
+    #     return switches
+
     def step(
         self,
         task,
@@ -144,6 +199,14 @@ class Darts:
             # Regularization.
             scale_factor = self.config.dropout_scale_factor
 
+            edges = sum(i for i in range(2, self.config.n_nodes+2))
+            switches_normal = np.ones((edges,
+                                       len(self.primitives)),
+                                      dtype=bool).tolist()
+            switches_reduce = np.ones((edges,
+                                       len(self.primitives)),
+                                      dtype=bool).tolist()
+
             # For softmax temperature
             global_train_steps = 0
             for current_stage in range(self.config.architecture_stages):
@@ -158,6 +221,7 @@ class Darts:
                     # more cells, i.e., L_k > L_k−1
                     if self.config.use_search_space_approximation and \
                             self.config.use_reinitialize_model:
+                        # Pass the config here
                         self.model.reinit_search_model()
 
                 for train_step in range(train_steps):
@@ -216,6 +280,7 @@ class Darts:
                             or self.config.use_search_space_approximation:
 
                         with torch.no_grad():
+
                             for normal, reduce in zip(self.model.alpha_normal,
                                                       self.model.alpha_reduce):
                                 _, indices = torch.topk(normal[:, :], n_ops)
@@ -230,6 +295,7 @@ class Darts:
                                     self.primitives)).cuda()
                                 reduce.data = mask.scatter_(
                                     1, indices, 1.) * reduce
+
         else:
             for train_step in range(train_steps):
                 warm_up = (
