@@ -36,7 +36,7 @@ def set_hyperparameter(config):
     # Default P-DARTS settings
     # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
     # DARTS in the initial stage.
-    config.architecture_stages = 3
+    config.architecture_stages = 3  # 3
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
@@ -79,10 +79,7 @@ def set_hyperparameter(config):
 
     # Settings for MetaNAS with P-DARTS addition
     elif config.hp_setting == "og_pdarts":
-        config.task_train_steps = 5
-        # Lowered, to keep evaluation short,
-        # on large experiments keep 50
-        config.test_task_train_steps = 5
+        config.task_train_steps = 4
         config.n_train = 15
         config.batch_size = 20
         config.batch_size_test = 10

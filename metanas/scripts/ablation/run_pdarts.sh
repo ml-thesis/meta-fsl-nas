@@ -36,6 +36,7 @@ args=(
     --warm_up_epochs 35 \
     --use_pairwise_input_alphas \
 
+    --task_train_steps 3 \
     --eval_freq 15 \
     --eval_epochs 5 \
     --print_freq 5 \
