@@ -76,7 +76,7 @@ OPS_SHARPDARTS = {
     'sep_conv_5x5': lambda C, stride, affine: SharpSepConv(
         C, C, 5, stride, 2, affine=affine),
     'flood_conv_3x3': lambda C, stride, affine: SharpSepConv(
-        C, C, 3, stride, 2, affine=affine, C_mid_mult=4),
+        C, C, 3, stride, 1, affine=affine, C_mid_mult=4),
     'flood_conv_5x5': lambda C, stride, affine: SharpSepConv(
         C, C, 5, stride, 2, affine=affine, C_mid_mult=4),
     'sep_conv_7x7': lambda C, stride, affine: SharpSepConv(
@@ -92,10 +92,10 @@ OPS_SHARPDARTS = {
         C, C, 3, stride, 2, dilation=2, affine=affine, C_mid_mult=4),
     'dil_flood_conv_5x5': lambda C, stride, affine: SharpSepConv(
         C, C, 5, stride, 2, dilation=2, affine=affine, C_mid_mult=4),
-    'choke_conv_3x3': lambda C, stride, affine, C_mid=32: SharpSepConv(
-        C, C, 3, stride, 1, affine=affine, C_mid=C_mid),
-    'dil_choke_conv_3x3': lambda C, stride, affine, C_mid=32: SharpSepConv(
-        C, C, 3, stride, 2, dilation=2, affine=affine, C_mid=C_mid),
+    'choke_conv_3x3': lambda C, stride, affine: SharpSepConv(
+        C, C, 3, stride, 1, affine=affine, C_mid=32),
+    'dil_choke_conv_3x3': lambda C, stride, affine: SharpSepConv(
+        C, C, 3, stride, 2, dilation=2, affine=affine, C_mid=32),
 }
 
 
@@ -346,7 +346,7 @@ class MixedOp(nn.Module):
     """ Mixed operation """
 
     def __init__(self, C, stride, PRIMITIVES, primitive_space,
-                 weight_regularization):
+                 weight_regularization, search_space_regularization=False):
         super().__init__()
         self.weight_regularization = weight_regularization
         self._ops = nn.ModuleList()
@@ -361,10 +361,10 @@ class MixedOp(nn.Module):
 
             # Apply level dropout after each skip-connection. To partially
             # "cut off" the straight path through skip-connections.
-            if isinstance(op, Identity):
-                op = nn.Sequential(op, nn.Dropout())
-            else:
+            if not isinstance(op, Identity):
                 op = nn.Sequential(op, DropPath_())
+            elif search_space_regularization:
+                op = nn.Sequential(op, nn.Dropout())
 
             self._ops.append(op)
 
@@ -377,11 +377,6 @@ class MixedOp(nn.Module):
                 if alpha below threshold
         """
         if self.weight_regularization == "scalar":
-            # for w, op in zip(weights, self._ops):
-            #     print(x.shape)
-            #     print(op)
-            #     w * op(x)
-
             return sum(
                 w * op(x) for w, op in zip(weights, self._ops)
                 if w > alpha_prune_threshold

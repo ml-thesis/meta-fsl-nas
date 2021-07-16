@@ -14,7 +14,7 @@ from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
 from metanas.task_optimizer.darts import Darts
 
-# from metanas.utils.cosine_power_annealing import cosine_power_annealing
+from metanas.utils.cosine_power_annealing import cosine_power_annealing
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
@@ -109,7 +109,7 @@ def meta_architecture_search(
     # Adjusted to download=True, to force the download, this doesn't
     # do any harm as the download will never retrigger.
     task_distribution = task_distribution_class(
-        config, download=True, cutout=config.use_cutout)
+        config, download=True)
 
     # meta model
     normalizer = _init_alpha_normalizer(
@@ -214,7 +214,8 @@ def _build_model(config, task_distribution, normalizer):
             PRIMITIVES=config.primitives,
             feature_scale_rate=1,
             primitive_space=config.primitives_type,
-            weight_regularization="scalar",
+            weight_regularization=config.darts_regularization,
+            search_space_regularization=config.use_search_space_regularization,
             use_hierarchical_alphas=config.use_hierarchical_alphas,
             use_pairwise_input_alphas=config.use_pairwise_input_alphas,
             alpha_prune_threshold=config.alpha_prune_threshold,
@@ -431,11 +432,33 @@ def train(
     config.losses_logger_test = utils.AverageMeter()
 
     # meta lr annealing
-    w_meta_lr_scheduler, a_meta_lr_scheduler = _get_meta_lr_scheduler(
-        config, meta_optimizer
-    )
+    if config.use_cosine_power_annealing:
+        w_meta_lr_power_schedule = cosine_power_annealing(
+            epochs=config.meta_epochs, max_lr=config.w_meta_lr,
+            min_lr=1e-4, exponent_order=2,  # TODO: min_lr in paper was 1e-8
+            max_epoch=config.meta_epochs,
+            warmup_epochs=config.warm_up_epochs
+        )
+        a_meta_lr_power_schedule = cosine_power_annealing(
+            epochs=config.meta_epochs, max_lr=config.a_meta_lr,
+            min_lr=1e-4, exponent_order=2,
+            max_epoch=config.meta_epochs,
+            warmup_epochs=config.warm_up_epochs
+        )
+    else:
+        w_meta_lr_scheduler, a_meta_lr_scheduler = _get_meta_lr_scheduler(
+            config, meta_optimizer
+        )
 
     for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
+
+        if config.use_cosine_power_annealing:
+            if (meta_epoch >= config.warm_up_epochs):
+                for param_group in config.w_meta_optim.param_groups:
+                    param_group['lr'] = w_meta_lr_power_schedule[meta_epoch-1]
+
+            for param_group in config.a_meta_optim.param_groups:
+                param_group['lr'] = a_meta_lr_power_schedule[meta_epoch-1]
 
         time_es = time.time()
         meta_train_batch = task_distribution.sample_meta_train()
@@ -469,12 +492,13 @@ def train(
         meta_optimizer.step(task_infos)
 
         # update meta LR
-        if (a_meta_lr_scheduler is not None) and \
-                (meta_epoch >= config.warm_up_epochs):
-            a_meta_lr_scheduler.step()
+        if not config.use_cosine_power_annealing:
+            if (a_meta_lr_scheduler is not None) and \
+                    (meta_epoch >= config.warm_up_epochs):
+                a_meta_lr_scheduler.step()
 
-        if w_meta_lr_scheduler is not None:
-            w_meta_lr_scheduler.step()
+            if w_meta_lr_scheduler is not None:
+                w_meta_lr_scheduler.step()
 
         time_ee = time.time()
         total_time.update(time_ee - time_es)
@@ -589,7 +613,8 @@ def train(
     print(meta_model.genotype(config.limit_skip_connections))
     experiment = {
         "meta_genotype": meta_model.genotype(
-            config.limit_skip_connections
+            # TODO: Omit
+            # config.limit_skip_connections
         ),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
@@ -644,7 +669,7 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     else:
         alpha_logger = None
 
-    # TODO: Shorten for ablation studies, config.eval_epochs):
+    # TODO: # range(config.eval_epochs):
     for eval_epoch in range(5):
 
         meta_test_batch = task_distribution.sample_meta_test()
@@ -943,8 +968,9 @@ if __name__ == "__main__":
     parser.add_argument("--primitives_type", default="fewshot",
                         help="Either fewshot or sharp")
 
-    parser.add_argument("--use_cutout", action="store_true")
-
+    parser.add_argument("--use_cosine_power_annealing", action="store_true")
+    # TODO: Probably not in use, since this didn't show to effect the score
+    # much.
     parser.add_argument("--use_reinitialize_model", action="store_true")
 
     # Architectures

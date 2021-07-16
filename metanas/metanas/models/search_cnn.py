@@ -88,8 +88,9 @@ class SearchCNNController(nn.Module):
         normalizer=dict(),
         PRIMITIVES=None,
         feature_scale_rate=2,
-        primitive_space="sharp",
+        primitive_space="fewshot",
         weight_regularization="scalar",
+        search_space_regularization=False,
         use_hierarchical_alphas=False,  # deprecated
         use_pairwise_input_alphas=False,
         alpha_prune_threshold=0.0,
@@ -201,6 +202,7 @@ class SearchCNNController(nn.Module):
             weight_regularization,
             PRIMITIVES=self.primitives,
             feature_scale_rate=feature_scale_rate,
+            search_space_regularization=search_space_regularization
         )
 
     def reinit_search_model(self):
@@ -693,7 +695,8 @@ class SearchCNN(nn.Module):
         primitive_space="fewshot",
         weight_regularization="scalar",
         PRIMITIVES=None,
-        feature_scale_rate=2
+        feature_scale_rate=2,
+        search_space_regularization=False
     ):
         """
         Args:
@@ -740,7 +743,7 @@ class SearchCNN(nn.Module):
 
             cell = SearchCell(
                 n_nodes, C_pp, C_p, C_cur, reduction_p, reduction, PRIMITIVES,
-                primitive_space, weight_regularization
+                primitive_space, weight_regularization, search_space_regularization
             )
             reduction_p = reduction
             self.cells.append(cell)
@@ -926,7 +929,8 @@ class SearchCell(nn.Module):
     """
 
     def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction,
-                 PRIMITIVES, primitive_space, weight_regularization):
+                 PRIMITIVES, primitive_space, weight_regularization,
+                 search_space_regularization):
         """
         Args:
             n_nodes: Number of intermediate n_nodes. The output of the
@@ -948,7 +952,8 @@ class SearchCell(nn.Module):
         # not match with output size of cell[k-2]. So the output[k-2]
         # should be reduced by preprocessing.
         if reduction_p:
-            self.preproc0 = ops.FactorizedReduce(C_pp, C, affine=False)
+            self.preproc0 = ops.FactorizedReduce(
+                C_pp, C, affine=False)
         else:
             self.preproc0 = ops.StdConv(C_pp, C, 1, 1, 0, affine=False)
         self.preproc1 = ops.StdConv(C_p, C, 1, 1, 0, affine=False)
@@ -962,7 +967,8 @@ class SearchCell(nn.Module):
                 stride = 2 if reduction and j < 2 else 1
 
                 op = ops.MixedOp(C, stride, PRIMITIVES, primitive_space,
-                                 weight_regularization)
+                                 weight_regularization,
+                                 search_space_regularization=search_space_regularization)
                 self.dag[i].append(op)
 
     def forward(
