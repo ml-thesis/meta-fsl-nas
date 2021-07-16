@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/og_train_ss_sharp
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/metanas/og_train_pdarts
 		
 mkdir -p $TRAIN_DIR
 
@@ -36,6 +36,7 @@ args=(
     --warm_up_epochs 35 \
     --use_pairwise_input_alphas \
 
+    --task_train_steps 3 \
     --eval_freq 15 \
     --eval_epochs 5 \
     --print_freq 5 \
@@ -54,8 +55,11 @@ args=(
     --use_first_order_darts \
     --use_torchmeta_loader \
 
-    # P-DARTS & sharpDARTS
-    --primitives_type sharp \
+    # P-DARTS
+    --use_search_space_approximation \
+
+    --use_search_space_regularization \
+    --limit_skip_connections 2 \
 )
 
 

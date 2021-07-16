@@ -2,7 +2,7 @@
 
 DATASET=omniglot
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/og_train_ssa_reinit
+TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/metanas/og_train_sharpdarts
 		
 mkdir -p $TRAIN_DIR
 
@@ -54,10 +54,10 @@ args=(
     --use_first_order_darts \
     --use_torchmeta_loader \
 
-    # P-DARTS & sharpDARTS
-    --use_search_space_approximation \
-    --use_reinitialize_model \
+    # sharpDARTS
+    --darts_regularization max_w \
+    --primitives_type sharp \
+    --use_cosine_power_annealing \
 )
-
 
 python -u -m metanas.metanas_main "${args[@]}"
