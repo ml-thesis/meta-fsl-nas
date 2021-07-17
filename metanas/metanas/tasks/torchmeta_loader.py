@@ -78,8 +78,7 @@ def create_og_data_loader(
     num_workers,
     download=False,
     use_vinyals_split=False,
-    seed=None,
-    cutout=False,
+    seed=None
 ):
     """Create a torchmeta BatchMetaDataLoader for Omniglot
 
@@ -101,30 +100,16 @@ def create_og_data_loader(
     Returns:
         A torchmeta :class:`BatchMetaDataLoader` object.
     """
-
-    if cutout:
-        dataset = Omniglot(
-            root,
-            num_classes_per_task=k_way,
-            transform=Compose(
-                [Resize(input_size), ToTensor(), RandomErasing()]),
-            target_transform=Categorical(num_classes=k_way),
-            class_augmentations=[Rotation([90, 180, 270])],
-            meta_split=meta_split,
-            download=download,
-            use_vinyals_split=use_vinyals_split,
-        )
-    else:
-        dataset = Omniglot(
-            root,
-            num_classes_per_task=k_way,
-            transform=Compose([Resize(input_size), ToTensor()]),
-            target_transform=Categorical(num_classes=k_way),
-            class_augmentations=[Rotation([90, 180, 270])],
-            meta_split=meta_split,
-            download=download,
-            use_vinyals_split=use_vinyals_split,
-        )
+    dataset = Omniglot(
+        root,
+        num_classes_per_task=k_way,
+        transform=Compose([Resize(input_size), ToTensor()]),
+        target_transform=Categorical(num_classes=k_way),
+        class_augmentations=[Rotation([90, 180, 270])],
+        meta_split=meta_split,
+        download=download,
+        use_vinyals_split=use_vinyals_split,
+    )
 
     dataset = ClassSplitter(
         dataset, shuffle=True, num_train_per_class=n_shot,
@@ -213,10 +198,12 @@ def create_triplemnist_data_loader(
     Returns:
         A torchmeta :class:`BatchMetaDataLoader` object.
     """
+
     dataset = triplemnist(
         root,
         n_shot,
         k_way,
+        transform=Compose([Resize(input_size), Grayscale(1), ToTensor()]),
         meta_split=meta_split,
         test_shots=n_query,
         download=download,
@@ -340,7 +327,7 @@ class TorchmetaTaskDistribution(TaskDistribution):
 
 
 class OmniglotFewShot(TorchmetaTaskDistribution):
-    def __init__(self, config, download=False, cutout=False):
+    def __init__(self, config, download=False):
         super().__init__(config, 1, 28, download)
         self.use_vinyals_split = config.use_vinyals_split
         self.train_loader = create_og_data_loader(
@@ -354,8 +341,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
             self.num_workers,
             self.download,
             self.use_vinyals_split,
-            seed=self.seed,
-            cutout=cutout,
+            seed=self.seed
         )
         self.train_it = iter(self.train_loader)
 
@@ -371,8 +357,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
                 self.num_workers,
                 self.download,
                 self.use_vinyals_split,
-                seed=self.seed,
-                cutout=False,  # Only use cutout for training or test
+                seed=self.seed
             )
             self.val_it = iter(self.val_loader)
 
@@ -387,8 +372,7 @@ class OmniglotFewShot(TorchmetaTaskDistribution):
             self.num_workers,
             self.download,
             self.use_vinyals_split,
-            seed=self.seed,
-            cutout=False,  # Only use cutout for training or test
+            seed=self.seed
         )
         self.test_it = iter(self.test_loader)
 
@@ -556,7 +540,8 @@ class TripleMNISTFewShot(TorchmetaTaskDistribution):
     """Class to create triple MNIST-based tasks for meta learning"""
 
     def __init__(self, config, download=False):
-        super().__init__(config, 3, 84, download)
+        # TODO: Originally 1, 84
+        super().__init__(config, 1, 28, download)
 
         self.train_loader = create_triplemnist_data_loader(
             self.data_path,
@@ -564,6 +549,7 @@ class TripleMNISTFewShot(TorchmetaTaskDistribution):
             self.k_way,
             self.n_shot_train,
             self.n_query,
+            self.input_size,
             self.meta_batch_size_train,
             self.num_workers,
             self.download,
@@ -577,6 +563,7 @@ class TripleMNISTFewShot(TorchmetaTaskDistribution):
             self.k_way,
             self.n_shot_test,
             self.n_query,
+            self.input_size,
             self.meta_batch_size_test,
             self.num_workers,
             self.download,
@@ -590,6 +577,7 @@ class TripleMNISTFewShot(TorchmetaTaskDistribution):
             self.k_way,
             self.n_shot_test,
             self.n_query,
+            self.input_size,
             self.meta_batch_size_test,
             self.num_workers,
             self.download,

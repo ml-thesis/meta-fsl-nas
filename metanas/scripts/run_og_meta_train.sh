@@ -53,14 +53,6 @@ args=(
     --reduction_layers 1 3 \
     --use_first_order_darts \
     --use_torchmeta_loader \
-
-    # P-DARTS & sharpDARTS
-    # --use_search_space_approximation \
-
-    # --use_search_space_regularization \
-    # --limit_skip_connections 2 \
-
-    --darts_regularization max_w \
 )
 
 

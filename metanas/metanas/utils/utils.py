@@ -36,15 +36,15 @@ def set_hyperparameter(config):
     # Default P-DARTS settings
     # 3 stages as defined in P-DARTS, 5.1.1, keep configuration the same as
     # DARTS in the initial stage.
-    config.architecture_stages = 3  # 3
+    config.architecture_stages = 2
 
     # The number of operations preserved on each edge of the super-network are,
     # 8, 5, and 3 for stage 1, 2 and 3, respectively.
     # In our case, the third stage will never drop operations.
-    config.drop_number_operations = [2, 2, 1]
+    config.drop_number_operations = [3, 2]
 
     # Dropout rate on the operations
-    config.dropout_ops = [0.0, 0.3, 0.6]
+    config.dropout_ops = [0.3, 0.6]
     config.dropout_scale_factor = 0.2
 
     if config.hp_setting == "in_metanas":  # setting for MetaNAS
@@ -63,7 +63,7 @@ def set_hyperparameter(config):
         config.w_task_anneal = 0
 
     elif config.hp_setting == "og_metanas":  # setting for MetaNAS
-        config.task_train_steps = 5
+        config.task_train_steps = 6
         config.n_train = 15
         config.batch_size = 20
         config.batch_size_test = 10
@@ -77,9 +77,9 @@ def set_hyperparameter(config):
         config.w_meta_anneal = 0
         config.w_task_anneal = 0
 
-    # Settings for MetaNAS with P-DARTS addition
+    # Settings for MetaNAS ablation study
     elif config.hp_setting == "og_pdarts":
-        config.task_train_steps = 4
+        config.task_train_steps = 3
         config.n_train = 15
         config.batch_size = 20
         config.batch_size_test = 10

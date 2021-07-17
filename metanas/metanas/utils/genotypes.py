@@ -133,18 +133,18 @@ PRIMITIVES_SHARP = [
     "max_pool_3x3",
     "skip_connect",
     "sep_conv_3x3",
-    # "sep_conv_5x5", # memory issue
-    # "flood_conv_3x3",
-    # "flood_conv_5x5",
-    "sep_conv_7x7",
+    "flood_conv_3x3",
     "dil_conv_3x3",
-    # "dil_conv_5x5", # memory issue
-    "conv_7x1_1x7",
-    # "dil_flood_conv_3x3",
-    # "dil_flood_conv_5x5",
+    "dil_flood_conv_3x3",
     "choke_conv_3x3",
     "dil_choke_conv_3x3",
-    # "none",  # remove
+    # "none",  # These are not described
+    # "dil_conv_5x5",
+    # "conv_7x1_1x7",
+    # "sep_conv_5x5",
+    # "flood_conv_5x5",
+    # "sep_conv_7x7",
+    # "dil_flood_conv_5x5",
 ]
 
 
@@ -411,6 +411,7 @@ def limit_skip_connections_alphas(alpha, primitives, k=2, nodes=3,
     gene = parse(alpha, k=k)
     num_sk_enabled = sum([1 for edge in gene
                           for op in edge if op[0] == "skip_connect"])
+    epsilon = 0.0001
 
     if num_sk_enabled < num_of_skip_connections:
         return gene
@@ -428,7 +429,10 @@ def limit_skip_connections_alphas(alpha, primitives, k=2, nodes=3,
             sk_alphas[row_idx] = float("inf")
 
             edge_idx, row_idx = find_indice(row_idx, nodes)
-            alpha[edge_idx][row_idx][sk_idx] = 0
+
+            # Set the actual alpha value to min - epsilon
+            alpha[edge_idx][row_idx][sk_idx] = torch.min(
+                alpha[edge_idx][row_idx]) - epsilon
             gene = parse(alpha, k=k)
 
             num_sk_enabled = sum([1 for edge in gene
