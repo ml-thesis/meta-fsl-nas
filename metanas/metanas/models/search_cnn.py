@@ -602,9 +602,8 @@ class SearchCNNController(nn.Module):
         for handler, formatter in zip(logger.handlers, org_formatters):
             handler.setFormatter(formatter)
 
-    def genotype(self, limit_skip_connections=None):
+    def genotype(self):
         """Generate genotype based on current weights
-        TODO: Implement limit skip-connections without switches + Testing
         """
         if self.use_pairwise_input_alphas:
 
@@ -623,11 +622,11 @@ class SearchCNNController(nn.Module):
             )
 
             # Limiting the skip connections, only applies to the normal cell.
-            if limit_skip_connections is not None:
-                gene_normal = gt.limit_skip_connections_pw(
-                    self.alpha_normal, weights_pw_normal,
-                    primitives=self.primitives,
-                    num_of_skip_connections=limit_skip_connections)
+            # if limit_skip_connections is not None:
+            #     gene_normal = gt.limit_skip_connections_pw(
+            #         self.alpha_normal, weights_pw_normal,
+            #         primitives=self.primitives,
+            #         num_of_skip_connections=limit_skip_connections)
 
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
@@ -638,11 +637,11 @@ class SearchCNNController(nn.Module):
                 self.alpha_reduce, k=2, primitives=self.primitives)
 
             # Limiting the skip connections, only applies to the normal cell.
-            if limit_skip_connections is not None:
-                gene_normal = gt.limit_skip_connections(
-                    self.alpha_normal,
-                    self.primitives, k=2,
-                    num_of_skip_connections=limit_skip_connections)
+            # if limit_skip_connections is not None:
+            #     gene_normal = gt.limit_skip_connections(
+            #         self.alpha_normal,
+            #         self.primitives, k=2,
+            #         num_of_skip_connections=limit_skip_connections)
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 

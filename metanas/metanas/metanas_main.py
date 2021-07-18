@@ -435,13 +435,13 @@ def train(
     if config.use_cosine_power_annealing:
         w_meta_lr_power_schedule = cosine_power_annealing(
             epochs=config.meta_epochs, max_lr=config.w_meta_lr,
-            min_lr=1e-4, exponent_order=2,  # TODO: min_lr in paper was 1e-8
+            min_lr=1e-8, exponent_order=2,  # TODO: min_lr adjustable
             max_epoch=config.meta_epochs,
             warmup_epochs=config.warm_up_epochs
         )
         a_meta_lr_power_schedule = cosine_power_annealing(
             epochs=config.meta_epochs, max_lr=config.a_meta_lr,
-            min_lr=1e-4, exponent_order=2,
+            min_lr=1e-8, exponent_order=2,
             max_epoch=config.meta_epochs,
             warmup_epochs=config.warm_up_epochs
         )
@@ -669,8 +669,7 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     else:
         alpha_logger = None
 
-    # TODO: # range(config.eval_epochs):
-    for eval_epoch in range(5):
+    for eval_epoch in range(config.eval_epochs):
 
         meta_test_batch = task_distribution.sample_meta_test()
 

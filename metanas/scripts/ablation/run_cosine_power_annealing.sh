@@ -5,7 +5,7 @@ DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/${DS}_train_power_cosine_$SEED
+    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/$N/${DS}_train_power_cosine/${DS}_train_power_cosine_$SEED
 	mkdir -p $TRAIN_DIR
 
     args=(
@@ -23,7 +23,7 @@ do
 
         # few shot params
         # examples per class
-        --n 1 \
+        --n $N \
         # number classes
         --k 20 \
         # test examples per class
@@ -37,9 +37,9 @@ do
         --warm_up_epochs $WARM_UP \
         --use_pairwise_input_alphas \
 
-        --eval_freq 15 \
-        --eval_epochs 5 \
-        --print_freq 5 \
+        --eval_freq $EVAL_FREQ \
+        --eval_epochs 50 \
+        --print_freq 100 \
 
         --normalizer softmax \
         --normalizer_temp_anneal_mode linear \
