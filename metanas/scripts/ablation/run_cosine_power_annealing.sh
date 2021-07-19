@@ -1,11 +1,11 @@
 #!/bin/bash
 
 DATASET=$DS
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
+DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/$N/${DS}_train_power_cosine/${DS}_train_power_cosine_$SEED
+    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/ablation/$N/${DS}_train_power_cosine/${DS}_train_power_cosine_$SEED
 	mkdir -p $TRAIN_DIR
 
     args=(
