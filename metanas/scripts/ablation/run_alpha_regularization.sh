@@ -18,7 +18,7 @@ do
         --hp_setting 'og_metanas' \
         --use_hp_setting 1 \
         --workers 0 \
-        --gpus 0 \
+        --gpus all \
         --test_adapt_steps 1.0 \
 
         # few shot params

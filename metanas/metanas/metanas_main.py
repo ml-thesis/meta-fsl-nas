@@ -610,12 +610,9 @@ def train(
 
     # P-DARTS, final stage for meta-learning model, we limit the skip
     # connections, as this is our final meta-model.
-    print(meta_model.genotype(config.limit_skip_connections))
+    print(meta_model.genotype())
     experiment = {
-        "meta_genotype": meta_model.genotype(
-            # TODO: Omit
-            # config.limit_skip_connections
-        ),
+        "meta_genotype": meta_model.genotype(),
         "alphas": [alpha for alpha in meta_model.alphas()],
     }
     experiment.update(train_info)
