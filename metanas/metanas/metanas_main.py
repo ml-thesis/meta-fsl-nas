@@ -666,7 +666,8 @@ def evaluate(config, meta_model, task_distribution, task_optimizer):
     else:
         alpha_logger = None
 
-    for eval_epoch in range(config.eval_epochs):
+    # TODO: Disable meta-testing fine-tuning
+    for eval_epoch in range(1):
 
         meta_test_batch = task_distribution.sample_meta_test()
 
