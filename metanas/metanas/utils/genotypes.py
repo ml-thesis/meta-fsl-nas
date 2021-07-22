@@ -136,8 +136,8 @@ PRIMITIVES_SHARP = [
     "flood_conv_3x3",
     "dil_conv_3x3",
     "dil_flood_conv_3x3",
-    "choke_conv_3x3",
-    "dil_choke_conv_3x3",
+    # "choke_conv_3x3", # Remove choke, due to long training time
+    # "dil_choke_conv_3x3",
     # "none",  # These are not described
     # "dil_conv_5x5",
     # "conv_7x1_1x7",
