@@ -1,8 +1,11 @@
 #!/bin/bash
 
+source /home/TUE/20184291/miniconda3/etc/profile.d/conda.sh
+source activate metanas
+
 DATASET=omniglot
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
-TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/og_train_max_w
+DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
+TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/
 		
 mkdir -p $TRAIN_DIR
 
@@ -22,7 +25,7 @@ args=(
 
     # few shot params
      # examples per class
-    --n 1 \
+    --n 3 \
     # number classes
     --k 20 \
     # test examples per class

@@ -1,11 +1,11 @@
 #!/bin/bash
 
 DATASET=$DS
-DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
+DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/ablation/${DS}_train_ssr/${DS}_train_ssr_$SEED
+    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/${DS}_train_ssr/${DS}_train_ssr_$SEED
 	mkdir -p $TRAIN_DIR
 
     args=(
@@ -21,6 +21,8 @@ do
         --gpus 0 \
         --test_adapt_steps 1.0 \
 
+        --seed $SEED
+        
         # few shot params
         # examples per class
         --n $N \
