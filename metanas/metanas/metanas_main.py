@@ -93,8 +93,8 @@ def meta_architecture_search(
     # P-DARTS
     # If Search Space Regularization is disabled, we don't limit
     # skip-connections during train-test or meta-testing phase
-    if not config.use_search_space_regularization:
-        config.limit_skip_connections = None
+    # if not config.use_search_space_regularization:
+    #     config.limit_skip_connections = None
 
     # SharpDARTS
     if config.primitives_type == "fewshot":
@@ -953,6 +953,18 @@ if __name__ == "__main__":
         "--use_search_space_regularization",
         action="store_true",
         help="Whether to enable P-DARTS, search space regularization",
+    )
+
+    parser.add_argument(
+        "--dropout_skip_connections",
+        action="store_true",
+        help="Use dropouts on skip-connections",
+    )
+
+    parser.add_argument(
+        "--use_limit_skip_connections",
+        action="store_true",
+        help="Change skip-connections to M in final gene",
     )
 
     # Discovered cells are allowed to keep M = 2, skip connections.

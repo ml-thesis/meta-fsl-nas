@@ -3,11 +3,15 @@
 DATASET=$DS
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 
+# Specify specific model state
+MODEL_PATH=/home/rob/Git/meta-fsl-nas/metanas/results/baseline/omniglot_train_metanas_n3/omniglot_train_metanas_1/e500_meta_state
+
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/baseline/${DS}_train_metanas_n${N}/${DS}_train_metanas_$SEED
-    mkdir -p $TRAIN_DIR
 
+    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/transfer/${DS}_train_n${N}/${DS}_train_metanas_$SEED
+            
+    mkdir -p $TRAIN_DIR
     args=(
         # Execution
         --name metatrain_og \
@@ -21,7 +25,7 @@ do
         --gpus 0 \
         --test_adapt_steps 1.0 \
 
-        --seed $SEED
+        --seed $SEED \
         
         # few shot params
         # examples per class
@@ -35,6 +39,7 @@ do
         --alpha_prune_threshold 0.01 \
         # Meta Learning
         --meta_model searchcnn \
+        --model_path ${MODEL_PATH} \
         --meta_epochs $EPOCHS \
         --warm_up_epochs $WARM_UP \
         --use_pairwise_input_alphas \
@@ -56,7 +61,11 @@ do
         --reduction_layers 1 3 \
         --use_first_order_darts \
         --use_torchmeta_loader \
+
+        # P-DARTS & sharpDARTS
+        # TODO: To be decided what is the best combination.
     )
+
 
     python -u -m metanas.metanas_main "${args[@]}"
 

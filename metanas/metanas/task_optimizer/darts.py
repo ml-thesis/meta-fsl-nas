@@ -246,10 +246,22 @@ class Darts:
                                     reduce) - epsilon
 
         else:
+            # Number of ops to preserve
+            dropout_stage = self.config.dropout_op
+            scale_factor = self.config.dropout_scale_factor
+
             for train_step in range(train_steps):
                 warm_up = (
                     epoch < self.warm_up_epochs
                 )  # if epoch < warm_up_epochs, do warm up
+
+                # Set the dropout rate for skip-connections,
+                if self.config.dropout_skip_connections and not \
+                        test_phase and not warm_up:
+                    # Exponential decay in dropout rate
+                    dropout_rate = dropout_stage * \
+                        np.exp(-train_step * scale_factor)
+                    self.model.drop_out_skip_connections(dropout_rate)
 
                 # tracked based on the global steps not the stage training
                 # steps
@@ -341,8 +353,11 @@ class Darts:
                 x_test = x_test.to(self.config.device, non_blocking=True)
                 y_test = y_test.to(self.config.device, non_blocking=True)
 
+                # TODO: If running use_search_space_regularization adjust this
                 if num_of_skip_connections is not None \
-                        and self.config.use_search_space_regularization:
+                        and self.config.use_limit_skip_connections:
+                    # and self.config.use_search_space_regularization:
+
                     gt.limit_skip_connections_alphas(
                         self.model.alpha_normal,
                         self.primitives, k=2,
