@@ -43,9 +43,12 @@ def set_hyperparameter(config):
     # In our case, the third stage will never drop operations.
     config.drop_number_operations = [3, 2]
 
-    # Dropout rate on the operations
+    # Dropout rate on the skip-connections
     config.dropout_ops = [0.3, 0.6]
     config.dropout_scale_factor = 0.2
+
+    # Dropout rate single stage skip-connections
+    config.dropout_op = 0.5
 
     if config.hp_setting == "in_metanas":  # setting for MetaNAS
         config.task_train_steps = 5
@@ -126,11 +129,11 @@ def set_hyperparameter(config):
         config.w_task_anneal = 0
 
     elif config.hp_setting == "test_exp":  # setting for debugging MetaNAS
-        config.task_train_steps = 2
-        config.n_train = 1
-        config.batch_size = 1
-        config.batch_size_test = 2
-        config.meta_batch_size = 2
+        config.task_train_steps = 5
+        config.n_train = 5
+        config.batch_size = 5
+        config.batch_size_test = 5
+        config.meta_batch_size = 5
         config.w_lr = 0.05
         config.alpha_lr = 0.05
         config.w_meta_lr = 1.0

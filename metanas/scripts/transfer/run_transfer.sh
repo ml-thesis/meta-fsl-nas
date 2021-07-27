@@ -9,12 +9,12 @@ WARM_UP_EPOCHS=250
 SEEDS=(1)
 EVAL_FREQ=100
 N=3
-DS=triplemnist #omniglot 
+DS=triplemnist #omniglot
 
 echo "Start run of baseline studies, variables epochs = ${EPOCHS}, warm up variables = ${WARM_UP_EPOCHS}, seeds = ${SEEDS[@]}, dataset = ${DS}"
 
 # MetaNAS baseline
-EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/baseline/run_metanas.sh
+EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/transfer/transfer_meta_train.sh
 
 # Best ablation components
 # EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_metanas.sh
