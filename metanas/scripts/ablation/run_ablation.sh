@@ -6,7 +6,7 @@ source activate metanas
 # parameters
 EPOCHS=500
 WARM_UP_EPOCHS=250
-SEEDS=(1)
+SEEDS=(2)
 EVAL_FREQ=100
 N=1
 DS=omniglot
@@ -25,9 +25,8 @@ echo "Start run of ablation studies, variables epochs = ${EPOCHS}, warm up varia
 # EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_ss_approximation.sh
 # EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_ss_regularization.sh
 
-# MetaNAS baseline
-# EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_metanas_baseline.sh
-
 # Custom adjustments
 EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_dropout_skip_conn.sh
-EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_dropout_and_sk.sh
+EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_limit_sk.sh
+# TODO: Still need to run on seed 1
+EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_dropout_and_limit_sk.sh

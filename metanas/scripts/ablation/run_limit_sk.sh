@@ -1,11 +1,11 @@
 #!/bin/bash
 
 DATASET=$DS
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
+DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/${DS}_train_dropout/${DS}_train_dropout_$SEED
+    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/ablation/${DS}_train_dropout_sk/${DS}_train_dropout_sk_$SEED
 	mkdir -p $TRAIN_DIR
 
     args=(
@@ -41,7 +41,7 @@ do
 
         --eval_freq $EVAL_FREQ \
         --eval_epochs 50 \
-        --print_freq 10 \
+        --print_freq 100 \
 
         --normalizer softmax \
         --normalizer_temp_anneal_mode linear \
@@ -58,7 +58,8 @@ do
         --use_torchmeta_loader \
 
         # Custom adjustment
-        --dropout_skip_connections \
+        # Default M=2,
+        --use_limit_skip_connection \
     )
 
     python -u -m metanas.metanas_main "${args[@]}"

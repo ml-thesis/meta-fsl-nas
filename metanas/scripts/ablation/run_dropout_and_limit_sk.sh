@@ -41,7 +41,7 @@ do
 
         --eval_freq $EVAL_FREQ \
         --eval_epochs 50 \
-        --print_freq 10 \
+        --print_freq 100 \
 
         --normalizer softmax \
         --normalizer_temp_anneal_mode linear \

@@ -215,7 +215,7 @@ def _build_model(config, task_distribution, normalizer):
             feature_scale_rate=1,
             primitive_space=config.primitives_type,
             weight_regularization=config.darts_regularization,
-            search_space_regularization=config.use_search_space_regularization,
+            dropout_skip_connections=True if config.use_search_space_regularization or config.dropout_skip_connections else False,
             use_hierarchical_alphas=config.use_hierarchical_alphas,
             use_pairwise_input_alphas=config.use_pairwise_input_alphas,
             alpha_prune_threshold=config.alpha_prune_threshold,

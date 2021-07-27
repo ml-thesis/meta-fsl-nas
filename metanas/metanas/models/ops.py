@@ -346,7 +346,7 @@ class MixedOp(nn.Module):
     """ Mixed operation """
 
     def __init__(self, C, stride, PRIMITIVES, primitive_space,
-                 weight_regularization, search_space_regularization=False):
+                 weight_regularization, dropout_skip_connections=False):
         super().__init__()
         self.weight_regularization = weight_regularization
         self._ops = nn.ModuleList()
@@ -363,7 +363,7 @@ class MixedOp(nn.Module):
             # "cut off" the straight path through skip-connections.
             if not isinstance(op, Identity):
                 op = nn.Sequential(op, DropPath_())
-            elif search_space_regularization:
+            elif dropout_skip_connections:
                 op = nn.Sequential(op, nn.Dropout())
 
             self._ops.append(op)
