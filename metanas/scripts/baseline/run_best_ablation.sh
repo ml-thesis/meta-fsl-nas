@@ -1,12 +1,12 @@
 #!/bin/bash
 
 DATASET=$DS
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
+DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/${DS}_train_dropout/${DS}_train_dropout_$SEED
-	mkdir -p $TRAIN_DIR
+    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/baseline/${DS}_train_metanas_n${N}_no_power_cosine/${DS}_train_metanas_$SEED
+    mkdir -p $TRAIN_DIR
 
     args=(
         # Execution
@@ -41,7 +41,7 @@ do
 
         --eval_freq $EVAL_FREQ \
         --eval_epochs 50 \
-        --print_freq 10 \
+        --print_freq 100 \
 
         --normalizer softmax \
         --normalizer_temp_anneal_mode linear \
@@ -57,8 +57,16 @@ do
         --use_first_order_darts \
         --use_torchmeta_loader \
 
-        # Custom adjustment
+        # sharpDARTS
+	# TODO: Omitted for now due to little impact?
+        # --use_cosine_power_annealing \
+        --darts_regularization max_w \
+
+	# Custom adjustment
         --dropout_skip_connections \
+        # Default M=2, Keep in mind just lowers the alphas
+	# Doesn't strictly enforce. 
+        --use_limit_skip_connection \
     )
 
     python -u -m metanas.metanas_main "${args[@]}"

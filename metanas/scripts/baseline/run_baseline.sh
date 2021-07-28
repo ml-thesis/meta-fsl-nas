@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# source /home/TUE/20184291/miniconda3/etc/profile.d/conda.sh
-# source activate metanas
+source /home/TUE/20184291/miniconda3/etc/profile.d/conda.sh
+source activate metanas
 
 # parameters
 EPOCHS=500
@@ -14,7 +14,7 @@ DS=triplemnist #omniglot
 echo "Start run of baseline studies, variables epochs = ${EPOCHS}, warm up variables = ${WARM_UP_EPOCHS}, seeds = ${SEEDS[@]}, dataset = ${DS}"
 
 # MetaNAS baseline
-EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/baseline/run_metanas.sh
+# EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/baseline/run_metanas.sh
 
 # Best ablation components
-# EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_metanas.sh
+EPOCHS=$EPOCHS WARM_UP=$WARM_UP_EPOCHS SEEDS=${SEEDS[@]} DS=$DS N=$N EVAL_FREQ=$EVAL_FREQ ./scripts/ablation/run_best_ablation.sh

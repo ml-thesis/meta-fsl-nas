@@ -90,7 +90,7 @@ class SearchCNNController(nn.Module):
         feature_scale_rate=2,
         primitive_space="fewshot",
         weight_regularization="scalar",
-        search_space_regularization=False,
+        dropout_skip_connections=False,
         use_hierarchical_alphas=False,  # deprecated
         use_pairwise_input_alphas=False,
         alpha_prune_threshold=0.0,
@@ -189,7 +189,7 @@ class SearchCNNController(nn.Module):
         for n, p in self.named_parameters():
             if "alpha" in n:
                 self._alphas.append((n, p))
-
+        print(f"Using dropout on skip-connections {dropout_skip_connections}")
         self.net = SearchCNN(
             C_in,
             C,
@@ -202,7 +202,7 @@ class SearchCNNController(nn.Module):
             weight_regularization,
             PRIMITIVES=self.primitives,
             feature_scale_rate=feature_scale_rate,
-            search_space_regularization=search_space_regularization
+            dropout_skip_connections=dropout_skip_connections
         )
 
     def reinit_search_model(self):
@@ -695,7 +695,7 @@ class SearchCNN(nn.Module):
         weight_regularization="scalar",
         PRIMITIVES=None,
         feature_scale_rate=2,
-        search_space_regularization=False
+        dropout_skip_connections=False
     ):
         """
         Args:
@@ -742,7 +742,7 @@ class SearchCNN(nn.Module):
 
             cell = SearchCell(
                 n_nodes, C_pp, C_p, C_cur, reduction_p, reduction, PRIMITIVES,
-                primitive_space, weight_regularization, search_space_regularization
+                primitive_space, weight_regularization, dropout_skip_connections
             )
             reduction_p = reduction
             self.cells.append(cell)
@@ -929,7 +929,7 @@ class SearchCell(nn.Module):
 
     def __init__(self, n_nodes, C_pp, C_p, C, reduction_p, reduction,
                  PRIMITIVES, primitive_space, weight_regularization,
-                 search_space_regularization):
+                 dropout_skip_connections):
         """
         Args:
             n_nodes: Number of intermediate n_nodes. The output of the
@@ -967,7 +967,7 @@ class SearchCell(nn.Module):
 
                 op = ops.MixedOp(C, stride, PRIMITIVES, primitive_space,
                                  weight_regularization,
-                                 search_space_regularization=search_space_regularization)
+                                 dropout_skip_connections=dropout_skip_connections)
                 self.dag[i].append(op)
 
     def forward(

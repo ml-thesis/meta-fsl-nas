@@ -4,8 +4,8 @@
 # source activate metanas
 
 # parameters
-EPOCHS=500
-WARM_UP_EPOCHS=250
+EPOCHS=250
+WARM_UP_EPOCHS=0 # 250
 SEEDS=(1)
 EVAL_FREQ=100
 N=3

@@ -213,7 +213,7 @@ class Darts:
                     # We reduce the operation space of O_k candidate operations
                     # at the end of each stage, i.e. |O^k_(i,j)| = O_k > O_k-1
                     if current_stage+1 != self.config.architecture_stages \
-                            or self.config.use_search_space_approximation:
+                            and self.config.use_search_space_approximation:
 
                         epsilon = 0.0001
                         with torch.no_grad():
@@ -256,8 +256,9 @@ class Darts:
                 )  # if epoch < warm_up_epochs, do warm up
 
                 # Set the dropout rate for skip-connections,
+                # TODO: Test with not warm_up commented
                 if self.config.dropout_skip_connections and not \
-                        test_phase and not warm_up:
+                        test_phase:  # and not warm_up:
                     # Exponential decay in dropout rate
                     dropout_rate = dropout_stage * \
                         np.exp(-train_step * scale_factor)
