@@ -5,7 +5,7 @@ DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/baseline/${DS}_train_metanas_n${N}_no_power_cosine/${DS}_train_metanas_$SEED
+    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/baseline/${DS}_train_dropout_limit_sk_n${N}/${DS}_train_dropout_limit_sk_$SEED
     mkdir -p $TRAIN_DIR
 
     args=(
@@ -57,15 +57,10 @@ do
         --use_first_order_darts \
         --use_torchmeta_loader \
 
-        # sharpDARTS
-	# TODO: Omitted for now due to little impact?
-        # --use_cosine_power_annealing \
-        --darts_regularization max_w \
-
-	# Custom adjustment
+	    # Custom adjustment
         --dropout_skip_connections \
         # Default M=2, Keep in mind just lowers the alphas
-	# Doesn't strictly enforce. 
+	    # Doesn't strictly enforce. 
         --use_limit_skip_connection \
     )
 

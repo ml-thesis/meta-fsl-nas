@@ -1,13 +1,17 @@
 #!/bin/bash
 
 DATASET=$DS
-DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
+DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
+
+# Specify specific model state
+MODEL_PATH=/home/TUE/20184291/meta-fsl-nas/metanas/results/baseline/omniglot_train_metanas_n3/omniglot_train_metanas_1/e500_meta_state
 
 for SEED in ${SEEDS}
 do
-    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/ablation/${DS}_train_dropout_limit_sk/${DS}_train_dropout_limit_sk_$SEED
-	mkdir -p $TRAIN_DIR
 
+    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/transfer/${DS}_train_n${N}/${DS}_train_metanas_$SEED
+            
+    mkdir -p $TRAIN_DIR
     args=(
         # Execution
         --name metatrain_og \
@@ -21,7 +25,7 @@ do
         --gpus 0 \
         --test_adapt_steps 1.0 \
 
-        --seed $SEED
+        --seed $SEED \
         
         # few shot params
         # examples per class
@@ -35,6 +39,7 @@ do
         --alpha_prune_threshold 0.01 \
         # Meta Learning
         --meta_model searchcnn \
+        --model_path ${MODEL_PATH} \
         --meta_epochs $EPOCHS \
         --warm_up_epochs $WARM_UP \
         --use_pairwise_input_alphas \
@@ -57,12 +62,8 @@ do
         --use_first_order_darts \
         --use_torchmeta_loader \
 
-        # Custom adjustment
-        --dropout_skip_connections \
-
-        # Default M=2,
-        --use_limit_skip_connection \
     )
+
 
     python -u -m metanas.metanas_main "${args[@]}"
 
