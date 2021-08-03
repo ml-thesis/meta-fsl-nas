@@ -1,15 +1,15 @@
 #!/bin/bash
 
 DATASET=$DS
-DATASET_DIR=/home/TUE/20184291/meta-fsl-nas/data
+DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 
 # Specify specific model state
-MODEL_PATH=/home/TUE/20184291/meta-fsl-nas/metanas/results/baseline/omniglot_train_metanas_n3/omniglot_train_metanas_1/e500_meta_state
+MODEL_PATH=/home/rob/Git/meta-fsl-nas/metanas/results/baseline/omniglot_train_metanas_n3/omniglot_train_metanas_1/e500_meta_state
 
 for SEED in ${SEEDS}
 do
 
-    TRAIN_DIR=/home/TUE/20184291/meta-fsl-nas/metanas/results/transfer/${DS}_train_n${N}/${DS}_train_metanas_$SEED
+    TRAIN_DIR=/home/rob/Git/meta-fsl-nas/metanas/results/transfer/${DS}_train_n${N}/${DS}_train_metanas_$SEED
             
     mkdir -p $TRAIN_DIR
     args=(
