@@ -247,15 +247,15 @@ class SearchCNNController(nn.Module):
             weights_pw_reduce,
         )
 
-    def discretize_alphas(self, alphas):
-        """Return the discrete/normalized alphas and the
-        raw alphas for UNAS"""
-        alphas = [self.apply_normalizer(alpha) for alpha in alphas]
-        return alphas
+    # UNAS methods for the model
+    # def discretize_alphas(self, alphas):
+    #     """Return the discrete/normalized alphas and the
+    #     raw alphas for UNAS"""
+    #     alphas = [self.apply_normalizer(alpha) for alpha in alphas]
+    #     return alphas
 
     # def set_alphas(self, alpha_normal, alpha_reduce):
     #     """We set the alphas"""
-    #     # TODO: Set values of module differently
     #     print(alpha_normal[0])
     #     for i, (r, n) in enumerate(zip(alpha_reduce, alpha_normal)):
     #         self.alpha_normal[i].data = r

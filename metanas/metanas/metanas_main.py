@@ -9,10 +9,12 @@ import torch
 import torch.nn.functional as F
 
 from metanas.meta_optimizer.reptile import NAS_Reptile
+from metanas.meta_optimizer.agents.random_agent import RandomAgent
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
 from metanas.task_optimizer.darts import Darts
+from metanas.env.core import NasEnv
 
 from metanas.utils.cosine_power_annealing import cosine_power_annealing
 from metanas.utils import genotypes as gt
@@ -431,11 +433,16 @@ def train(
     config.losses_logger = utils.AverageMeter()
     config.losses_logger_test = utils.AverageMeter()
 
+    # Reinforcement Learning environment wrapper
+    # TODO: Currently only wraps the normal cell
+    env = NasEnv(config, meta_model, task_optimizer, task_distribution)
+    agent = RandomAgent(meta_model, config)
+
     # meta lr annealing
     if config.use_cosine_power_annealing:
         w_meta_lr_power_schedule = cosine_power_annealing(
             epochs=config.meta_epochs, max_lr=config.w_meta_lr,
-            min_lr=1e-8, exponent_order=2,  # TODO: min_lr adjustable
+            min_lr=1e-8, exponent_order=2,  # min_lr adjustable
             max_epoch=config.meta_epochs,
             warmup_epochs=config.warm_up_epochs
         )
@@ -473,6 +480,12 @@ def train(
 
         time_bs = time.time()
         for task in meta_train_batch:
+            # Set task of environment, as the sampling
+            # will be done outside of the environment wrapper
+            env.set_task(task, meta_epoch)
+
+            # Now optimize the task with the agent
+            agent.act_on_episode(env)
             task_infos += [
                 task_optimizer.step(
                     task, epoch=meta_epoch,
@@ -488,8 +501,9 @@ def train(
         train_test_loss.append(config.losses_logger.avg)
         train_test_accu.append(config.top1_logger.avg)
 
+        # TODO: Dont apply Reptile
         # do a meta update
-        meta_optimizer.step(task_infos)
+        # meta_optimizer.step(task_infos)
 
         # update meta LR
         if not config.use_cosine_power_annealing:
@@ -978,8 +992,8 @@ if __name__ == "__main__":
                         help="Either fewshot or sharp")
 
     parser.add_argument("--use_cosine_power_annealing", action="store_true")
-    # TODO: Probably not in use, since this didn't show to effect the score
-    # much.
+
+    # reinit didn't perform well
     parser.add_argument("--use_reinitialize_model", action="store_true")
 
     # Architectures
