@@ -163,9 +163,10 @@ def meta_architecture_search(
         f"train steps for evaluation:{ config.test_task_train_steps} ")
 
     # run the evaluation
-    config, alpha_logger, sparse_params = evaluate(
-        config, meta_model, task_distribution, task_optimizer
-    )
+    # TODO: Omit this for now
+    # config, alpha_logger, sparse_params = evaluate(
+    #     config, meta_model, task_distribution, task_optimizer
+    # )
 
     # save results
     experiment = {
@@ -173,8 +174,8 @@ def meta_architecture_search(
         "alphas": [alpha for alpha in meta_model.alphas()],
         "final_eval_test_accu": config.top1_logger_test.avg,
         "final_eval_test_loss": config.losses_logger_test.avg,
-        "alpha_logger": alpha_logger,
-        "sparse_params_logger": sparse_params,
+        # "alpha_logger": alpha_logger,
+        # "sparse_params_logger": sparse_params,
     }
     experiment.update(train_info)
     prefix = config.eval_prefix
@@ -481,17 +482,17 @@ def train(
         time_bs = time.time()
         for task in meta_train_batch:
             # Set task of environment, as the sampling
-            # will be done outside of the environment wrapper
+            # is done outside of the environment wrapper
             env.set_task(task, meta_epoch)
 
             # Now optimize the task with the agent
             agent.act_on_episode(env)
-            task_infos += [
-                task_optimizer.step(
-                    task, epoch=meta_epoch,
-                    global_progress=global_progress
-                )
-            ]
+            # task_infos += [
+            #     task_optimizer.step(
+            #         task, epoch=meta_epoch,
+            #         global_progress=global_progress
+            #     )
+            # ]
             meta_model.load_state_dict(meta_state)
 
         time_be = time.time()
@@ -529,7 +530,9 @@ def train(
 
         # meta testing every config.eval_freq epochs
         # meta test eval + backup
-        if meta_epoch % config.eval_freq == 0:
+        # TODO: currently dont enter this loop
+        a = False
+        if a:  # meta_epoch % config.eval_freq == 0:
             meta_test_batch = task_distribution.sample_meta_test()
 
             # Each task starts with the current meta state
@@ -545,6 +548,7 @@ def train(
 
             global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
 
+            # TODO: Interact with environment instead
             task_infos = []
             for task in meta_test_batch:
                 task_infos += [
