@@ -13,7 +13,7 @@ def plot_training(path, eval_every):
         res = pickle.load(f)
 
     # TODO: Possiblity of combining multiple paths/runs with different
-    # seed.
+    # seed. Already implemented in notebooks.
 
     _, axes = plt.subplots(1, 2, figsize=(20, 5))
     # Length like train loss

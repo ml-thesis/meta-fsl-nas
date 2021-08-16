@@ -13,6 +13,7 @@ from metanas.utils import genotypes as gt
 from metanas.models.search_cnn import SearchCNNController
 from metanas.task_optimizer.alpha import Alpha
 
+
 class UNAS:
     def __init__(self, model, config, do_scheduler_lr=False):
         self.config = config
@@ -29,7 +30,7 @@ class UNAS:
             lr=self.config.w_lr,
             betas=(0.0, 0.999),
             weight_decay=self.config.w_weight_decay,
-        ) 
+        )
 
         # architecture optimizer
         self.a_optim = torch.optim.Adam(
@@ -39,7 +40,7 @@ class UNAS:
             weight_decay=self.config.alpha_weight_decay,
         )
 
-        # TODO: For Factorized cell structure
+        # Possible for Factorized cell structure
         self.alpha = Alpha(self.model.alpha_normal, self.model.alpha_reduce)
 
         self.architect = REINFORCE(
@@ -121,7 +122,7 @@ class UNAS:
                 warm_up,
             )
 
-        # TODO: Add logging as done in darts.py
+        # Add logging as done in darts.py?
 
         # Test evaluation model at the end of training,
         with torch.no_grad():
@@ -178,7 +179,7 @@ def train(task,
           w_optim,
           alpha_optim,
           alpha,
-          lr, # weight learning rate
+          lr,  # weight learning rate
           global_progress,
           config,
           warm_up=False):
@@ -194,17 +195,18 @@ def train(task,
 
         # w_reduce, w_normal, c_reduce, c_normal = architect.sample_alphas()
         w_normal, w_reduce = alpha()
-        w_normal_no_grad, w_reduce_no_grad = alpha.clone_weights(w_normal, w_reduce)
+        w_normal_no_grad, w_reduce_no_grad = alpha.clone_weights(
+            w_normal, w_reduce)
 
         # phase 2. architect step (alpha)
-        # TODO: Do we pass the validation data here or no?
+        # Do we pass the validation data here or no?
         architect.step(train_X, train_y, val_X, val_y,
                        alpha_optim, w_optim,
                        w_reduce, w_normal,
                        global_progress)
 
         # phase 1. child network step (w)
-        # TODO: Pass alphas, however still ignoring the pairwise alphas
+        # Pass alphas, however still ignoring the pairwise alphas
         w_optim.zero_grad()
 
         model.set_alphas(w_normal_no_grad, w_reduce_no_grad)
@@ -212,7 +214,7 @@ def train(task,
         logits = model(train_X)
         loss = model.criterion(logits, train_y)
 
-        # TODO: We don't have the grad_fn so this is required?
+        # We don't have the grad_fn so this is required?
         # dummy = sum([torch.sum(param) for param in model.parameters()])
         # loss += dummy * 0.
 
@@ -224,6 +226,7 @@ def train(task,
 class REINFORCE:
     """This is the architect in the standard DARTS implementation
     """
+
     def __init__(self, model, config, alpha, w_momentum, w_weight_decay):
         """
         Args:
@@ -248,7 +251,7 @@ class REINFORCE:
         self.exp_avg2 = utils.EMAMeter(alpha=0.9)
 
         self.gen_error_alpha = config.gen_error_alpha
-        self.gen_error_alpha_lambda = config.gen_error_alpha_lambda 
+        self.gen_error_alpha_lambda = config.gen_error_alpha_lambda
 
     def step(self, train_X, train_y, val_X, val_y, alpha_optim, w_optim,
              w_normal, w_reduce,
@@ -258,7 +261,6 @@ class REINFORCE:
         alpha_optim.zero_grad()
 
         with torch.no_grad():
-            # TODO: Originally done by self.module.alphas
             d_normal = self.model.discretize_alphas(w_normal)
             d_reduce = self.model.discretize_alphas(w_reduce)
             loss_disc, acc, loss_train, loss_diff = self.training_objective(
@@ -267,7 +269,7 @@ class REINFORCE:
                 val_X, val_y
             )
 
-        # TODO: Possibly reduce_loss_disc, to one disk
+        # Possibly reduce_loss_disc, to one disc
         avg = torch.mean(loss_disc).detach()
         print("avg:", avg)
 
@@ -279,9 +281,10 @@ class REINFORCE:
         reward = (loss_disc - baseline).detach()
         # TODO: pull code from alphas module and more sure this
         # works for our implementation as well
-        log_q_d = self.alpha.log_probability(w_normal, w_reduce, d_normal, d_reduce)
+        log_q_d = self.alpha.log_probability(
+            w_normal, w_reduce, d_normal, d_reduce)
         loss = torch.mean(log_q_d * reward) + baseline
-        
+
         loss_train, loss_diff = torch.mean(loss_train), torch.mean(loss_diff)
 
         # TODO: Log entropy possibly
