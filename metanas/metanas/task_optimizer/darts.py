@@ -139,7 +139,6 @@ class Darts:
             )  # if epoch < warm_up_epochs, do warm up
 
             # Set the dropout rate for skip-connections,
-            # TODO: Test with not warm_up commented
             if self.config.dropout_skip_connections and not \
                     test_phase:  # and not warm_up:
                 # Exponential decay in dropout rate
@@ -160,7 +159,6 @@ class Darts:
             if a_task_lr_scheduler is not None:
                 a_task_lr_scheduler.step()
 
-            # TODO: Move this train step to env class
             train(
                 task,
                 self.model,
@@ -238,7 +236,6 @@ class Darts:
                 x_test = x_test.to(self.config.device, non_blocking=True)
                 y_test = y_test.to(self.config.device, non_blocking=True)
 
-                # TODO: If running use_search_space_regularization adjust this
                 if num_of_skip_connections is not None \
                         and self.config.use_limit_skip_connections:
                     # and self.config.use_search_space_regularization:
@@ -406,7 +403,9 @@ class Architect:
         # compute gradient
         v_alphas = tuple(self.v_net.alphas())
         v_weights = tuple(self.v_net.weights())
-        v_grads = torch.autograd.grad(loss, v_alphas + v_weights)
+        # TODO: Check allow_unused=True setting
+        v_grads = torch.autograd.grad(
+            loss, v_alphas + v_weights, allow_unused=True)
         dalpha = v_grads[: len(v_alphas)]
         dw = v_grads[len(v_alphas):]
 

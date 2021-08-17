@@ -92,12 +92,6 @@ def meta_architecture_search(
     else:
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
-    # P-DARTS
-    # If Search Space Regularization is disabled, we don't limit
-    # skip-connections during train-test or meta-testing phase
-    # if not config.use_search_space_regularization:
-    #     config.limit_skip_connections = None
-
     # SharpDARTS
     if config.primitives_type == "fewshot":
         config.primitives = gt.PRIMITIVES_FEWSHOT
@@ -122,6 +116,8 @@ def meta_architecture_search(
         config.normalizer_temp_anneal_mode,
     )
     meta_model = _build_model(config, task_distribution, normalizer)
+
+    # TODO: Define RL agents as meta-optimizer
 
     # task & meta optimizer
     config, meta_optimizer = _init_meta_optimizer(
@@ -435,8 +431,10 @@ def train(
     config.losses_logger_test = utils.AverageMeter()
 
     # Reinforcement Learning environment wrapper
-    # TODO: Currently only wraps the normal cell
-    env = NasEnv(config, meta_model, task_optimizer, task_distribution)
+    # TODO: Currently only wraps the normal cell, should be moved one
+    # scope up
+
+    env = NasEnv(config, meta_model, task_optimizer, test_phase=False)
     agent = RandomAgent(meta_model, config)
 
     # meta lr annealing
@@ -481,18 +479,14 @@ def train(
 
         time_bs = time.time()
         for task in meta_train_batch:
-            # Set task of environment, as the sampling
-            # is done outside of the environment wrapper
+            # Set task of environment, as the sampling is done outside
+            # of the environment wrapper
             env.set_task(task, meta_epoch)
 
             # Now optimize the task with the agent
-            agent.act_on_episode(env)
-            # task_infos += [
-            #     task_optimizer.step(
-            #         task, epoch=meta_epoch,
-            #         global_progress=global_progress
-            #     )
-            # ]
+            task_infos += [
+                agent.act_on_env(env)
+            ]
             meta_model.load_state_dict(meta_state)
 
         time_be = time.time()
@@ -502,9 +496,9 @@ def train(
         train_test_loss.append(config.losses_logger.avg)
         train_test_accu.append(config.top1_logger.avg)
 
-        # TODO: Dont apply Reptile
+        # TODO: Dont apply Reptile?
         # do a meta update
-        # meta_optimizer.step(task_infos)
+        meta_optimizer.step(task_infos)
 
         # update meta LR
         if not config.use_cosine_power_annealing:
@@ -775,6 +769,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dataset", default="omniglot",
                         help="omniglot / miniimagenet")
+
+    parser.add_argument("--agent", default="random",
+                        help="random / sac")
+
     parser.add_argument(
         "--use_vinyals_split",
         action="store_true",
