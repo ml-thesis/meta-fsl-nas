@@ -1,11 +1,9 @@
-import numpy as np
-
-from metanas.meta_optimizer.agent import NAS_agent
+from metanas.meta_optimizer.agents.agent import NAS_agent
 
 
 class RandomAgent(NAS_agent):
-    def _init_(self, meta_model, config):
-        super().__init(meta_model, config)
+    def __init__(self, config, meta_model, env):
+        super().__init__(config, meta_model, env)
 
     def act_on_test_env(self, test_env):
         _, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
@@ -37,12 +35,13 @@ class RandomAgent(NAS_agent):
             ep_len += 1
 
         self.log_episode(ep_ret, ep_len)
-        env.reset()
 
         # Final darts evaluation step
         task_info = env.darts_evaluation_step(
             self.config.sparsify_input_alphas,
             self.config.limit_skip_connections)
+
+        env.reset()
 
         return task_info
 
