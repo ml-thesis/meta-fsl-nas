@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 
 from metanas.meta_optimizer.reptile import NAS_Reptile
-from metanas.meta_optimizer.agents.random_agent import RandomAgent
+from metanas.meta_optimizer.agents.Random.random import RandomAgent
+from metanas.meta_optimizer.agents.SAC.rl2_sac import RL2_SAC
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
@@ -433,9 +434,9 @@ def train(
     # Reinforcement Learning environment wrapper
     # TODO: Currently only wraps the normal cell, should be moved one
     # scope up
-
     env = NasEnv(config, meta_model, task_optimizer, test_phase=False)
-    agent = RandomAgent(meta_model, config)
+    # agent = RandomAgent(config, meta_model, env)
+    agent = RL2_SAC_agent(config, meta_model, env)
 
     # meta lr annealing
     if config.use_cosine_power_annealing:
@@ -475,18 +476,31 @@ def train(
         # Each task starts with the current meta state
         meta_state = copy.deepcopy(meta_model.state_dict())
         global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
+
         task_infos = []
+        agent_infos = []
 
         time_bs = time.time()
         for task in meta_train_batch:
+            # First improve initialisation of DARTS
+
             # Set task of environment, as the sampling is done outside
             # of the environment wrapper
-            env.set_task(task, meta_epoch)
+            if meta_epoch >= config.warm_up_epochs:
+                env.set_task(task, meta_epoch)
 
-            # Now optimize the task with the agent
+                # Now optimize the task with the agent
+                agent_infos += [
+                    agent.act_on_env(env)
+                ]
+
             task_infos += [
-                agent.act_on_env(env)
+                task_optimizer.step(
+                    task, epoch=meta_epoch,
+                    global_progress=global_progress
+                )
             ]
+
             meta_model.load_state_dict(meta_state)
 
         time_be = time.time()
@@ -525,8 +539,8 @@ def train(
         # meta testing every config.eval_freq epochs
         # meta test eval + backup
         # TODO: currently dont enter this loop
-        a = False
-        if a:  # meta_epoch % config.eval_freq == 0:
+        # a = False
+        if meta_epoch % config.eval_freq == 0:
             meta_test_batch = task_distribution.sample_meta_test()
 
             # Each task starts with the current meta state
@@ -620,8 +634,6 @@ def train(
         job_id=config.job_id
     )
 
-    # P-DARTS, final stage for meta-learning model, we limit the skip
-    # connections, as this is our final meta-model.
     print(meta_model.genotype())
     experiment = {
         "meta_genotype": meta_model.genotype(),
