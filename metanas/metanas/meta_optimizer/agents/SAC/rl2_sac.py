@@ -18,20 +18,8 @@ class RL2_SAC(NAS_agent):
     def __init__(self, config, meta_model, env):
         super().__init__(config, meta_model, env)
 
-        self.hidden_size = 512
-
-        # Create actor-critic module and target networks
-        self.ac = GRUActorCritic(env.observation_space,
-                                 env.action_space, self.hidden_size)
-        # TODO: Add dict with hidden size as kwargs, **ac_kwargs
-
-        self.ac_targ = copy.deepcopy(self.ac)
-
-        # TODO: Format these variables for alpha annealling.
-        # If alpha SGD is enabled for exploration, also add location
-        # of this value in the paper.
-
         # TODO: Set these variables from config
+        self.hidden_size = 512
         self.alpha = 0.
         self.gamma = 0.99
 
@@ -50,6 +38,16 @@ class RL2_SAC(NAS_agent):
 
         self.batch_size = 5
         self.max_ep_len = 200
+
+        # Create actor-critic module and target networks
+        self.ac = GRUActorCritic(env.observation_space,
+                                 env.action_space, self.hidden_size)
+
+        self.ac_targ = copy.deepcopy(self.ac)
+
+        # TODO: Format these variables for alpha annealling.
+        # If alpha SGD is enabled for exploration, also add location
+        # of this value in the paper.
 
         # Take gradient of alpha to balance exploitation vs exploration
         # TODO: How does this work in meta-learning setting?
@@ -73,13 +71,7 @@ class RL2_SAC(NAS_agent):
         # recurrent policies
         self.replay_buffer = GRUReplayBuffer(size=replay_size)
 
-        # Count variables (protip: try to get a feel for how different size
-        # networks behave!)
-        var_counts = tuple(count_vars(module)
-                           for module in [self.ac.pi, self.ac.q1, self.ac.q2])
-        # logger.log(
-        #     '\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n'
-        #     % var_counts)
+        # TODO: Add # of variables of agent
 
     def compute_q_loss(self, data):
         o, r, o2, d = data['obs'], data['rew'], data['obs2'], data['done']
@@ -132,7 +124,7 @@ class RL2_SAC(NAS_agent):
         # exploration (max entropy) and exploitation (max Q)
         if self.auto_entropy is True:
             alpha_loss = -(self.log_alpha * (logp_pi +
-                                             self.target_entropy).detach()).mean()
+                                             self.target_entropy)).mean()
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
             self.alpha_optimizer.step()

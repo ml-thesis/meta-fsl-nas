@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
+from torch.distributions import Categorical
 
 
 def linear_weights_init(m):
@@ -16,6 +17,19 @@ def linear_weights_init(m):
             m.bias.data.uniform_(-stdv, stdv)
 
 
+def mlp(sizes, activation, output_activation=nn.Identity):
+    layers = []
+    for j in range(len(sizes)-1):
+        act = activation if j < len(sizes)-2 else output_activation
+        layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
+    return nn.Sequential(*layers)
+
+
+def count_vars(module):
+    return sum([np.prod(p.shape) for p in module.parameters()])
+
+
+# TODO: Set in config
 LOG_STD_MAX = 2
 LOG_STD_MIN = -20
 
@@ -207,7 +221,7 @@ class GRUQFunction(nn.Module):
 class GRUActorCritic(nn.Module):
 
     def __init__(self, observation_space, action_space,
-                 hidden_size=256, activation=nn.ReLU()):
+                 hidden_size=(256, 256), activation=nn.ReLU()):
         super().__init__()
 
         # TODO: Adjust Actor Critic for discrete action space
@@ -228,3 +242,91 @@ class GRUActorCritic(nn.Module):
             a, hidden_out = self.pi.get_action(
                 obs, last_action, hidden, deterministic)
             return a, hidden_out
+
+
+"""MLP Actor Critic implementation for discrete action space and testing purposes"""
+
+
+class CategoricalPolicy(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_size, activation):
+        super().__init__()
+        pi_sizes = [obs_dim] + hidden_size + [act_dim]
+        self.pi = mlp(pi_sizes, activation, nn.Tanh).cuda()
+
+    def act(self, states):
+        action_logits = self.pi(states)
+
+        if len(action_logits.shape) == 1:
+            greedy_actions = torch.argmax(action_logits, dim=0, keepdim=True)
+        else:
+            greedy_actions = torch.argmax(action_logits, dim=1, keepdim=True)
+
+        # greedy_actions = torch.argmax(
+        #     action_logits, dim=1, keepdim=True)
+        return greedy_actions
+
+    def sample(self, states):
+
+        policy = self.pi(states)
+        if len(policy.shape) == 1:
+            action_probs = F.softmax(policy, dim=0)
+        else:
+            action_probs = F.softmax(policy, dim=1)
+
+        action_dist = Categorical(action_probs)
+        # TODO: actions can be omitted
+        actions = action_dist.sample().view(-1, 1)
+
+        # Avoid numerical instability.
+        z = (action_probs == 0.0).float() * 1e-8
+        log_action_probs = torch.log(action_probs + z)
+
+        return actions, action_probs, log_action_probs
+
+
+class MLPQNetwork(nn.Module):
+
+    def __init__(self, obs_dim, act_dim, hidden_size, activation):
+        super().__init__()
+        # TODO: This network should end up having an
+        # rnn
+        self.q = mlp([obs_dim + act_dim] + hidden_size + [1], activation)
+
+        # self.a = mlp([obs_dim] + [hidden_size] + [act_dim], activation)
+        # self.v = mlp([obs_dim] + [hidden_size] + [1], activation)
+
+    def forward(self, obs, act):
+        q = self.q(torch.cat([obs, act], dim=-1))
+        # a = self.a(obs)
+        # v = self.v(obs)
+
+        # return v + a - a.mean(1, keepdim=True)
+        # print(q.shape)
+        return q  # torch.squeeze(q)  # Critical to ensure q has right shape.
+
+
+class MLPActorCritic(nn.Module):
+    def __init__(self, observation_space, action_space,
+                 hidden_size=[256, 256],
+                 activation=nn.ReLU):
+        super().__init__()
+
+        obs_dim = observation_space.shape[0]
+        act_dim = action_space.n
+
+        self.pi = CategoricalPolicy(obs_dim, act_dim, hidden_size, activation)
+        self.q1 = MLPQNetwork(obs_dim, act_dim, hidden_size, activation)
+        self.q2 = MLPQNetwork(obs_dim, act_dim, hidden_size, activation)
+
+    def explore(self, o):
+        with torch.no_grad():
+            action, _, _ = self.pi.sample(
+                torch.as_tensor(o, dtype=torch.float32).cuda())
+        return action.item()
+
+    def act(self, o):
+        # Greedy action selection by the policy
+        with torch.no_grad():
+            action = self.pi.act(
+                torch.as_tensor(o, dtype=torch.float32).cuda())
+        return action.item()
