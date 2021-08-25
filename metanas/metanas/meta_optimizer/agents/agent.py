@@ -3,7 +3,10 @@ from abc import ABC
 import os
 import gym
 
+import torch
+
 from torch.utils.tensorboard import SummaryWriter
+from metanas.meta_optimizer.agents.utils.logx import EpochLogger
 
 
 class NAS_agent(ABC):
@@ -41,3 +44,33 @@ class NAS_agent(ABC):
             dict: Task and environment info
         """
         return
+
+
+class RL_agent(ABC):
+    def __init__(self, env, test_env, max_ep_len=1000, steps_per_epoch=4000,
+                 epochs=100, gamma=0.99, lr=1e-3, batch_size=100, seed=42,
+                 num_test_episodes=10, logger_kwargs=dict()):
+
+        self.env = env
+        self.test_env = test_env
+        self.max_ep_len = max_ep_len
+
+        self.lr = lr
+        self.seed = seed
+        self.gamma = gamma
+
+        self.epochs = epochs
+        self.num_test_episodes = num_test_episodes
+        self.batch_size = batch_size
+        self.steps_per_epoch = steps_per_epoch
+        self.total_steps = steps_per_epoch * epochs
+
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+
+        # SpinngingUp logging & Tensorboard
+        self.logger = EpochLogger(**logger_kwargs)
+        self.logger.save_config(locals())
+
+        self.summary_writer = SummaryWriter(
+            log_dir=logger_kwargs['output_dir'], flush_secs=1)

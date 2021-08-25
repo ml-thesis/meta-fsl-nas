@@ -56,37 +56,36 @@ class ReplayBuffer:
 
 
 class SAC:
-    def __init__(self, env, test_env, ac_kwargs=dict(),
+    def __init__(self, env, test_env, ac_kwargs=dict(), max_ep_len=500,
                  steps_per_epoch=4000, epochs=100, replay_size=int(1e6),
                  gamma=0.99, polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100,
                  start_steps=10000, update_after=1000, update_every=50,
                  num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
                  seed=42):
 
-        # TODO: Set in inheritance class
+        # TODO: Set in inheritance class, RL_agent
         self.env = env
         self.test_env = test_env
-        # TODO: Adjust this to be a configuration
-        self.max_ep_len = 1000
-        self.save_freq = save_freq
+        self.max_ep_len = max_ep_len
         self.epochs = epochs
         self.batch_size = batch_size
         self.lr = lr
         self.gamma = gamma
-        self.update_after = update_after
         self.num_test_episodes = num_test_episodes
+        self.steps_per_epoch = steps_per_epoch
+        self.total_steps = steps_per_epoch * epochs
+
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
 
         torch.manual_seed(seed)
         np.random.seed(seed)
 
         self.polyak = polyak
-        self.steps_per_epoch = steps_per_epoch
-        self.total_steps = steps_per_epoch * epochs
+        self.save_freq = save_freq
         self.update_every = update_every
         self.start_steps = start_steps
-
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        self.update_after = update_after
 
         # The online and target networks
         self.ac = MLPActorCritic(env.observation_space,
@@ -94,6 +93,7 @@ class SAC:
         self.ac_targ = copy.deepcopy(self.ac)
 
         # SpinngingUp logging & Tensorboard
+        # TODO: Set in inheritance class, RL_agent
         self.logger = EpochLogger(**logger_kwargs)
         self.logger.save_config(locals())
 
@@ -134,35 +134,38 @@ class SAC:
         o, o2 = batch['obs'],  batch['obs2']
         a, r, d = batch['act'], batch['rew'], batch['done']
 
-        q1 = self.ac.q1(o, a)
-        q2 = self.ac.q2(o, a)
+        r = r.unsqueeze(1)
+        # a = a.unsqueeze(1)
+        d = d.unsqueeze(1)
+
+        q1 = self.ac.q1(o)
+        q2 = self.ac.q2(o)
 
         with torch.no_grad():
             # Target actions come from *current* policy
             _, a2, logp_a2 = self.ac.pi.sample(o2)
             # Target Q-values
-            q1_pi_targ = self.ac_targ.q1(o2, a2)
-            q2_pi_targ = self.ac_targ.q2(o2, a2)
+            q1_pi_targ = self.ac_targ.q1(o2)
+            q2_pi_targ = self.ac_targ.q2(o2)
 
             # Next Q-value
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
             next_q = (a2 * (q_pi_targ - self.alpha * logp_a2)
-                      ).sum(dim=1, keepdims=True)
-            r = r.unsqueeze(1)
+                      ).sum(-1).unsqueeze(-1)
 
             backup = r + self.gamma * (1 - d) * next_q
 
         # MSE loss against Bellman backup
-        loss_q1 = ((q1.mean() - backup).pow(2)).mean()
-        loss_q2 = ((q2.mean() - backup).pow(2)).mean()
+        loss_q1 = ((q1.gather(1, a.long()) - backup).pow(2)).mean()
+        loss_q2 = ((q2.gather(1, a.long()) - backup).pow(2)).mean()
         loss_q = loss_q1 + loss_q2
 
         # TODO: Include calculating TD errors for PER weights
 
         # Useful info for logging
         q_info = dict(Q1Vals=q1.cpu().detach().numpy(),
-                      Q2Vals=q2.cpu().detach().numpy())  # .mean().item())
+                      Q2Vals=q2.cpu().detach().numpy())
 
         return loss_q, q_info
 
@@ -174,12 +177,21 @@ class SAC:
         _, pi, logp_pi = self.ac.pi.sample(o)
 
         with torch.no_grad():
-            q1_pi = self.ac.q1(o, pi)
-            q2_pi = self.ac.q2(o, pi)
+            q1_pi = self.ac.q1(o)  # , pi)
+            q2_pi = self.ac.q2(o)  # , pi)
             q_pi = torch.min(q1_pi, q2_pi)
 
         # Entropy-regularized policy loss
-        loss_pi = (self.alpha * logp_pi - q_pi).mean()
+        # TODO: self.alpha.detach() * log_porbs - q
+
+        # log_probs = (probs * log_probs).sum(-1)
+        # alpha_loss = -(self.log_alpha * (log_probs.detach() + self.entropy_target)).mean()
+
+        # self.alpha_opt.zero_grad()
+        # alpha_loss.backward()
+        # self.alpha_opt.step()
+
+        loss_pi = (pi * (self.alpha * logp_pi - q_pi)).sum(-1).mean()
 
         # Useful info for logging
         pi_info = dict(LogPi=logp_pi.cpu().detach().numpy())  # .mean().item())
@@ -216,6 +228,7 @@ class SAC:
         # Recording policy values
         self.logger.store(LossPi=loss_pi.item(), **pi_info)
 
+        # TODO: Do update counter?
         # Finally, update target networks by polyak averaging.
         with torch.no_grad():
             for p, p_targ in zip(self.ac.parameters(),
@@ -281,7 +294,7 @@ class SAC:
 
             # Update handling
             if t >= self.update_after and t % self.update_every == 0:
-                for j in range(self.update_every):
+                for _ in range(self.update_every):
                     self.update()
 
             # End of epoch handling
