@@ -9,20 +9,20 @@ from torch.distributions.normal import Normal
 from torch.distributions import Categorical
 
 
-def linear_weights_init(m):
-    if isinstance(m, nn.Linear):
-        stdv = 1. / math.sqrt(m.weight.size(1))
-        m.weight.data.uniform_(-stdv, stdv)
-        if m.bias is not None:
-            m.bias.data.uniform_(-stdv, stdv)
-
-
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
     for j in range(len(sizes)-1):
         act = activation if j < len(sizes)-2 else output_activation
         layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
     return nn.Sequential(*layers)
+
+
+def linear_weights_init(m):
+    if isinstance(m, nn.Linear):
+        stdv = 1. / math.sqrt(m.weight.size(1))
+        m.weight.data.uniform_(-stdv, stdv)
+        if m.bias is not None:
+            m.bias.data.uniform_(-stdv, stdv)
 
 
 def count_vars(module):
@@ -255,11 +255,12 @@ class CategoricalPolicy(nn.Module):
 
     def act(self, states):
         action_logits = self.pi(states)
+        greedy_actions = torch.argmax(action_logits, dim=-1, keepdim=True)
 
-        if len(action_logits.shape) == 1:
-            greedy_actions = torch.argmax(action_logits, dim=0, keepdim=True)
-        else:
-            greedy_actions = torch.argmax(action_logits, dim=1, keepdim=True)
+        # if len(action_logits.shape) == 1:
+        #     greedy_actions = torch.argmax(action_logits, dim=0, keepdim=True)
+        # else:
+        #     greedy_actions = torch.argmax(action_logits, dim=1, keepdim=True)
 
         # greedy_actions = torch.argmax(
         #     action_logits, dim=1, keepdim=True)
@@ -268,10 +269,12 @@ class CategoricalPolicy(nn.Module):
     def sample(self, states):
 
         policy = self.pi(states)
-        if len(policy.shape) == 1:
-            action_probs = F.softmax(policy, dim=0)
-        else:
-            action_probs = F.softmax(policy, dim=1)
+        action_probs = F.softmax(policy, dim=-1)
+
+        # if len(policy.shape) == 1:
+        #     action_probs = F.softmax(policy, dim=0)
+        # else:
+        #     action_probs = F.softmax(policy, dim=1)
 
         action_dist = Categorical(action_probs)
         # TODO: actions can be omitted
@@ -290,13 +293,15 @@ class MLPQNetwork(nn.Module):
         super().__init__()
         # TODO: This network should end up having an
         # rnn
-        self.q = mlp([obs_dim + act_dim] + hidden_size + [1], activation)
+        # + act_dim
+        self.q = mlp([obs_dim] + hidden_size + [act_dim], activation)
 
         # self.a = mlp([obs_dim] + [hidden_size] + [act_dim], activation)
         # self.v = mlp([obs_dim] + [hidden_size] + [1], activation)
 
-    def forward(self, obs, act):
-        q = self.q(torch.cat([obs, act], dim=-1))
+    def forward(self, obs):  # , act):
+        # q = self.q(torch.cat([obs, act], dim=-1))
+        q = self.q(obs)
         # a = self.a(obs)
         # v = self.v(obs)
 
