@@ -8,13 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 
 from metanas.meta_optimizer.agents.utils.logx import EpochLogger
-from metanas.meta_optimizer.agents.SAC.core import MLPActorCritic, count_vars
-
-
-def combined_shape(length, shape=None):
-    if shape is None:
-        return (length,)
-    return (length, shape) if np.isscalar(shape) else (length, *shape)
+from metanas.meta_optimizer.agents.SAC.core import MLPActorCritic, count_vars, combined_shape
 
 
 class ReplayBuffer:
@@ -63,7 +57,6 @@ class SAC:
                  num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
                  seed=42):
 
-        # TODO: Set in inheritance class, RL_agent
         self.env = env
         self.test_env = test_env
         self.max_ep_len = max_ep_len
@@ -93,7 +86,6 @@ class SAC:
         self.ac_targ = copy.deepcopy(self.ac)
 
         # SpinngingUp logging & Tensorboard
-        # TODO: Set in inheritance class, RL_agent
         self.logger = EpochLogger(**logger_kwargs)
         self.logger.save_config(locals())
 
@@ -117,12 +109,17 @@ class SAC:
             self.env.observation_space.shape[0], self.env.action_space.n,
             self.device, replay_size)
 
+        # Optimize alpha value for set to 0.2
+        self.entropy_target = 0.98 * (-np.log(1 / self.env.action_space.n))
+        self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+        self.alpha = self.log_alpha.exp()
+        self.alpha_optimizer = Adam([self.log_alpha], lr=self.lr)
+
         # Set up optimizers for policy and q-function
         self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.lr)
         self.q_optimizer = Adam(self.q_params, lr=self.lr)
 
-        # TODO: Optimize the alpha value
-        self.alpha = alpha
+        self.update_counter = 0
 
         # Count variables
         var_counts = tuple(count_vars(module)
@@ -135,7 +132,6 @@ class SAC:
         a, r, d = batch['act'], batch['rew'], batch['done']
 
         r = r.unsqueeze(1)
-        # a = a.unsqueeze(1)
         d = d.unsqueeze(1)
 
         q1 = self.ac.q1(o)
@@ -144,6 +140,7 @@ class SAC:
         with torch.no_grad():
             # Target actions come from *current* policy
             _, a2, logp_a2 = self.ac.pi.sample(o2)
+
             # Target Q-values
             q1_pi_targ = self.ac_targ.q1(o2)
             q2_pi_targ = self.ac_targ.q2(o2)
@@ -161,8 +158,6 @@ class SAC:
         loss_q2 = ((q2.gather(1, a.long()) - backup).pow(2)).mean()
         loss_q = loss_q1 + loss_q2
 
-        # TODO: Include calculating TD errors for PER weights
-
         # Useful info for logging
         q_info = dict(Q1Vals=q1.cpu().detach().numpy(),
                       Q2Vals=q2.cpu().detach().numpy())
@@ -177,26 +172,21 @@ class SAC:
         _, pi, logp_pi = self.ac.pi.sample(o)
 
         with torch.no_grad():
-            q1_pi = self.ac.q1(o)  # , pi)
-            q2_pi = self.ac.q2(o)  # , pi)
+            q1_pi = self.ac.q1(o)
+            q2_pi = self.ac.q2(o)
             q_pi = torch.min(q1_pi, q2_pi)
 
         # Entropy-regularized policy loss
-        # TODO: self.alpha.detach() * log_porbs - q
+        loss_pi = (pi * (self.alpha.detach() * logp_pi - q_pi)).sum(-1).mean()
 
-        # log_probs = (probs * log_probs).sum(-1)
-        # alpha_loss = -(self.log_alpha * (log_probs.detach() + self.entropy_target)).mean()
-
-        # self.alpha_opt.zero_grad()
-        # alpha_loss.backward()
-        # self.alpha_opt.step()
-
-        loss_pi = (pi * (self.alpha * logp_pi - q_pi)).sum(-1).mean()
+        # Entropy
+        entropy = -torch.sum(pi * logp_pi, dim=1)
 
         # Useful info for logging
-        pi_info = dict(LogPi=logp_pi.cpu().detach().numpy())  # .mean().item())
+        pi_info = dict(LogPi=logp_pi.cpu().detach().numpy(),
+                       entropy=entropy.cpu().detach().numpy())
 
-        return loss_pi, pi_info
+        return loss_pi, logp_pi, pi_info
 
     def update(self):
         batch = self.replay_buffer.sample_batch(self.batch_size)
@@ -217,7 +207,7 @@ class SAC:
 
         # Next run one gradient descent step for pi.
         self.pi_optimizer.zero_grad()
-        loss_pi, pi_info = self.compute_policy_loss(batch)
+        loss_pi, logp_pi, pi_info = self.compute_policy_loss(batch)
         loss_pi.backward()
         self.pi_optimizer.step()
 
@@ -228,7 +218,23 @@ class SAC:
         # Recording policy values
         self.logger.store(LossPi=loss_pi.item(), **pi_info)
 
-        # TODO: Do update counter?
+        # Entropy values
+        alpha_loss = -(self.log_alpha * (logp_pi.detach() +
+                       self.entropy_target)).mean()
+
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+
+        self.alpha = self.log_alpha.exp()
+
+        # Recording alpha and alpha loss
+        self.logger.store(Alpha=alpha_loss.cpu().detach().numpy(),
+                          AlphaLoss=self.alpha.cpu().detach().numpy())
+
+        # TODO: Hard update or polyak averaging
+        # self.update_counter += 1
+
         # Finally, update target networks by polyak averaging.
         with torch.no_grad():
             for p, p_targ in zip(self.ac.parameters(),
@@ -239,16 +245,18 @@ class SAC:
                 p_targ.data.mul_(self.polyak)
                 p_targ.data.add_((1 - self.polyak) * p.data)
 
-    def get_action(self, o):
-        return self.ac.act(torch.as_tensor(o, dtype=torch.float32))
+    def get_action(self, o, greedy=True):
+        # Greedy action selection by the policy
+        return self.ac.act(torch.as_tensor(o, dtype=torch.float32)) if greedy \
+            else self.ac.explore(torch.as_tensor(o, dtype=torch.float32))
 
     def test_agent(self):
-        # TODO: Adjust get_action to obtain deterministic action
         for j in range(self.num_test_episodes):
             o, d, ep_ret, ep_len = self.test_env.reset(), False, 0, 0
             while not(d or (ep_len == self.max_ep_len)):
                 # Take deterministic actions at test time
-                o, r, d, _ = self.test_env.step(self.get_action(o))
+                o, r, d, _ = self.test_env.step(
+                    self.get_action(o, greedy=True))
                 ep_ret += r
                 ep_len += 1
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
@@ -272,7 +280,7 @@ class SAC:
             ep_len += 1
 
             # TODO: Part of discrete SAC
-            # Clip reward to [-1.0, 1.0].
+            # Clip reward to [-1.0, 1.0]
             # clipped_reward = max(min(reward, 1.0), -1.0)
 
             # Ignore the "done" signal if it comes from hitting the time

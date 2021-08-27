@@ -1,155 +1,222 @@
 import copy
 import time
+import random
 import itertools
 import numpy as np
 
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 
-from metanas.meta_optimizer.agents.SAC.core import GRUActorCritic, GRUReplayBuffer
-from metanas.meta_optimizer.agents.agent import NAS_agent
+from metanas.meta_optimizer.agents.utils.logx import EpochLogger
+from metanas.meta_optimizer.agents.SAC.core import GRUActorCritic, count_vars
 
 
-def count_vars(module):
-    return sum([np.prod(p.shape) for p in module.parameters()])
+class GRUReplayBuffer:
+    """An experience replay buffer for GRU agents, sampling full
+    trajectories
+    """
+
+    def __init__(self, device, size):
+        self.buffer = []
+        self.ptr, self.size, self.max_size = 0, 0, size
+        self.device = device
+
+    def store(self, h_in, h_out, obs, next_obs, prev_act,
+              act, prev_rew, rew, done):
+
+        self.buffer[self.ptr] = (
+            h_in, h_out, obs, next_obs, prev_act, act, prev_rew, rew, done)
+
+        self.ptr = (self.ptr+1) % self.max_size
+        self.size = min(self.size+1, self.max_size)
+
+    def sample_batch(self, batch_size=32):
+        h_in, h_out, obs, next_obs, prev_act, act, prev_rew, rew, \
+            done = [], [], [], [], [], [], [], [], []
+        batch = random.sample(self.buffer, batch_size)
+
+        for sample in batch:
+            hi, ho, o, o2, prev_a, a, prev_r, r, d = sample
+            obs.append(o)
+            next_obs.append(o2)
+            prev_act.append(prev_a)
+            act.append(a)
+            prev_rew.append(prev_r)
+            rew.append(r)
+            done.append(d)
+
+            # Hidden states dimensions
+            # shape (1, batch_size, hidden_size)
+            h_in.append(hi)
+            h_out.append(ho)
+
+        # concatenate along the batch dim
+        h_in = torch.cat(h_in, dim=-2)
+        h_out = torch.cat(h_out, dim=-2)
+
+        batch = dict(
+            hid_in=h_in, hid_out=h_out,
+            obs=obs, next_obs=next_obs,
+            prev_act=prev_act, a=act,
+            prev_r=prev_rew, r=rew,
+            done=done)
+
+        return {k: torch.tensor(v, dtype=torch.float32).to(self.device)
+                if not isinstance(v, tuple) else v
+                for k, v in batch.items()}
 
 
-class RL2_SAC(NAS_agent):
-    def __init__(self, config, meta_model, env):
-        super().__init__(config, meta_model, env)
+class SAC:
+    def __init__(self, env, test_env, ac_kwargs=dict(), max_ep_len=500,
+                 steps_per_epoch=4000, epochs=100, replay_size=int(1e6),
+                 gamma=0.99, polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100,
+                 start_steps=10000, update_after=1000, update_every=50,
+                 num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
+                 seed=42, hidden_size=256):
 
-        # TODO: Set these variables from config
-        self.hidden_size = 512
-        self.alpha = 0.
-        self.gamma = 0.99
+        # TODO: Set in inheritance class, RL_agent
+        self.env = env
+        self.test_env = test_env
+        self.max_ep_len = max_ep_len
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.lr = lr
+        self.gamma = gamma
+        self.num_test_episodes = num_test_episodes
+        self.steps_per_epoch = steps_per_epoch
+        self.total_steps = steps_per_epoch * epochs
 
-        replay_size = int(1e6)
-        self.target_entropy = -2
-        self.alpha_constant = copy.deepcopy(self.alpha)
+        # Hidden size for GRU
+        self.hidden_size = hidden_size
 
-        self.polyak = 0.995
-        self.lr = 3e-4
-        self.auto_entropy = False
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
 
-        self.update_after = 1000
-        self.update_every = 200
-        self.start_steps = 10000
-        self.steps_per_epoch = 4000
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
-        self.batch_size = 5
-        self.max_ep_len = 200
+        self.polyak = polyak
+        self.save_freq = save_freq
+        self.update_every = update_every
+        self.start_steps = start_steps
+        self.update_after = update_after
 
-        # Create actor-critic module and target networks
+        # The online and target networks
         self.ac = GRUActorCritic(env.observation_space,
-                                 env.action_space, self.hidden_size)
-
+                                 env.action_space, **ac_kwargs).to(self.device)
         self.ac_targ = copy.deepcopy(self.ac)
 
-        # TODO: Format these variables for alpha annealling.
-        # If alpha SGD is enabled for exploration, also add location
-        # of this value in the paper.
+        # SpinngingUp logging & Tensorboard
+        self.logger = EpochLogger(**logger_kwargs)
+        self.logger.save_config(locals())
 
-        # Take gradient of alpha to balance exploitation vs exploration
-        # TODO: How does this work in meta-learning setting?
-        # Garage proposes different alphas for every task, (multi-task
-        # learning)
-        # https://garage.readthedocs.io/en/latest/user/algo_mtsac.html
-        log_alpha = torch.zeros(
-            1, dtype=torch.float32, requires_grad=True, device="cuda")
-        self.alpha_optimizer = Adam([log_alpha], lr=self.lr)
+        # Set up model saving
+        self.logger.setup_pytorch_saver(self.ac)
+
+        self.summary_writer = SummaryWriter(
+            log_dir=logger_kwargs['output_dir'], flush_secs=1)
+
+        # Freeze target networks with respect to optimizers
+        # (only update via polyak averaging)
+        for p in self.ac_targ.parameters():
+            p.requires_grad = False
 
         # List of parameters for both Q-networks (save this for convenience)
-        q_params = itertools.chain(self.ac.q1.parameters(),
-                                   self.ac.q2.parameters())
+        self.q_params = itertools.chain(self.ac.q1.parameters(),
+                                        self.ac.q2.parameters())
+
+        # Set replay buffer
+        self.replay_buffer = GRUReplayBuffer(self.device, replay_size)
+
+        # Optimize alpha value for set to 0.2
+        self.entropy_target = 0.98 * (-np.log(1 / self.env.action_space.n))
+        self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+        self.alpha = self.log_alpha.exp()
+        self.alpha_optimizer = Adam([self.log_alpha], lr=self.lr)
 
         # Set up optimizers for policy and q-function
         self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.lr)
-        self.q_optimizer = Adam(q_params, lr=self.lr)
+        self.q_optimizer = Adam(self.q_params, lr=self.lr)
 
-        # Experience buffer
-        # Note, this replay buffer stores entire trajectories because of the
-        # recurrent policies
-        self.replay_buffer = GRUReplayBuffer(size=replay_size)
+        self.update_counter = 0
 
-        # TODO: Add # of variables of agent
+        # Count variables
+        var_counts = tuple(count_vars(module)
+                           for module in [self.ac.pi, self.ac.q1, self.ac.q2])
+        self.logger.log(
+            '\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
 
-    def compute_q_loss(self, data):
-        o, r, o2, d = data['obs'], data['rew'], data['obs2'], data['done']
-        a, a2 = data['act'], data['act2']
-        # Hidden layers of the RNN layer
-        hid_in, hid_out = data['hid_in'], data['hid_out']
+    def compute_critic_loss(self, batch):
+        o, o2 = batch['obs'],  batch['obs2']
+        a, r, d = batch['act'], batch['rew'], batch['done']
 
-        r = torch.unsqueeze(r, -1)
-        d = torch.unsqueeze(d, -1)
+        r = r.unsqueeze(1)
+        d = d.unsqueeze(1)
 
-        q1, _ = self.ac.q1(o, a, a2, hid_in)
-        q2, _ = self.ac.q2(o, a, a2, hid_in)
+        q1 = self.ac.q1(o)
+        q2 = self.ac.q2(o)
 
-        # Bellman backup for Q functions
         with torch.no_grad():
             # Target actions come from *current* policy
-            a2, logp_a2, _, _, _, _ = self.ac.pi.evaluate(o2, a, hid_out)
+            _, a2, logp_a2 = self.ac.pi.sample(o2)
 
             # Target Q-values
-            # Careful, hiden are tuples (a, b)
-            q1_pi_targ, _ = self.ac_targ.q1(o2, a2, a, hid_out)
-            q2_pi_targ, _ = self.ac_targ.q2(o2, a2, a, hid_out)
+            q1_pi_targ = self.ac_targ.q1(o2)
+            q2_pi_targ = self.ac_targ.q2(o2)
+
+            # Next Q-value
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
-            backup = r + self.gamma * \
-                (1 - d) * (q_pi_targ - self.alpha * logp_a2)
+
+            next_q = (a2 * (q_pi_targ - self.alpha * logp_a2)
+                      ).sum(-1).unsqueeze(-1)
+
+            backup = r + self.gamma * (1 - d) * next_q
 
         # MSE loss against Bellman backup
-        loss_q1 = ((q1 - backup)**2).mean()
-        loss_q2 = ((q2 - backup)**2).mean()
+        loss_q1 = ((q1.gather(1, a.long()) - backup).pow(2)).mean()
+        loss_q2 = ((q2.gather(1, a.long()) - backup).pow(2)).mean()
         loss_q = loss_q1 + loss_q2
 
+        # TODO: Include calculating TD errors for PER weights
+
         # Useful info for logging
-        q_info = dict(Q1Vals=q1.detach().cpu().numpy(),
-                      Q2Vals=q2.detach().cpu().numpy())
+        q_info = dict(Q1Vals=q1.cpu().detach().numpy(),
+                      Q2Vals=q2.cpu().detach().numpy())
+
         return loss_q, q_info
 
-    def compute_pi_loss(self, data):
-        o, r, o2, d = data['obs'], data['rew'], data['obs2'], data['done']
-        a, a2 = data['act'], data['act2']
-        # Hidden layers of the LSTM layer
-        hid_in, hid_out = data['hid_in'], data['hid_out']
+    def compute_policy_loss(self, batch):
+        o = batch['obs']
 
-        pi, logp_pi, _, _, _, _ = self.ac.pi.evaluate(o, a2, hid_in)
-        q1_pi, _ = self.ac.q1(o, pi, a2, hid_in)
-        q2_pi, _ = self.ac.q2(o, pi, a2, hid_in)
-        q_pi = torch.min(q1_pi, q2_pi)
+        # (Log of) probabilities to calculate expectations of Q and entropies.
+        # action probability, log action probabilities
+        _, pi, logp_pi = self.ac.pi.sample(o)
 
-        # TODO: Possibility of adding decaying alpha
-        # Could apply alpha auto entropy as trade-off between
-        # exploration (max entropy) and exploitation (max Q)
-        if self.auto_entropy is True:
-            alpha_loss = -(self.log_alpha * (logp_pi +
-                                             self.target_entropy)).mean()
-            self.alpha_optimizer.zero_grad()
-            alpha_loss.backward()
-            self.alpha_optimizer.step()
-            alpha = self.log_alpha.exp()
-        else:
-            # keep a constant alpha
-            alpha = self.alpha_constant
-            alpha_loss = 0
+        with torch.no_grad():
+            q1_pi = self.ac.q1(o)
+            q2_pi = self.ac.q2(o)
+            q_pi = torch.min(q1_pi, q2_pi)
 
         # Entropy-regularized policy loss
-        loss_pi = (alpha * logp_pi - q_pi).mean()
+        loss_pi = (pi * (self.alpha.detach() * logp_pi - q_pi)).sum(-1).mean()
 
         # Useful info for logging
-        pi_info = dict(LogPi=logp_pi.detach().cpu().numpy())
-        return loss_pi, pi_info
+        pi_info = dict(LogPi=logp_pi.cpu().detach().numpy())
 
-    def update(self, data):
+        return loss_pi, logp_pi, pi_info
+
+    def update(self):
+        batch = self.replay_buffer.sample_batch(self.batch_size)
+
         # First run one gradient descent step for Q1 and Q2
         self.q_optimizer.zero_grad()
-        loss_q, q_info = self.compute_q_loss(data)
+        loss_q, q_info = self.compute_critic_loss(batch)
         loss_q.backward()
         self.q_optimizer.step()
 
-        # Record things
-        # logger.store(LossQ=loss_q.item(), **q_info)
+        # Recording Q-values
+        self.logger.store(LossQ=loss_q.item(), **q_info)
 
         # Freeze Q-networks so you don't waste computational effort
         # computing gradients for them during the policy learning step.
@@ -158,7 +225,7 @@ class RL2_SAC(NAS_agent):
 
         # Next run one gradient descent step for pi.
         self.pi_optimizer.zero_grad()
-        loss_pi, pi_info = self.compute_pi_loss(data)
+        loss_pi, logp_pi, pi_info = self.compute_policy_loss(batch)
         loss_pi.backward()
         self.pi_optimizer.step()
 
@@ -166,163 +233,147 @@ class RL2_SAC(NAS_agent):
         for p in self.q_params:
             p.requires_grad = True
 
-        # Record things
-        # logger.store(LossPi=loss_pi.item(), **pi_info)
+        # Recording policy values
+        self.logger.store(LossPi=loss_pi.item(), **pi_info)
+
+        # Entropy values
+        alpha_loss = -(self.log_alpha * (logp_pi.detach() +
+                       self.entropy_target)).mean()
+
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+
+        # TODO: Log entropy and alpha value
+
+        self.alpha = self.log_alpha.exp()
+
+        # TODO: Hard update or polyak averaging
+        # self.update_counter += 1
+
+        # if self.update_counter % self.config["fixed_network_update_freq"] == 0:
+        #     self.hard_update_target_network()
 
         # Finally, update target networks by polyak averaging.
         with torch.no_grad():
             for p, p_targ in zip(self.ac.parameters(),
                                  self.ac_targ.parameters()):
-                # NB: We use an in-place operations "mul_", "add_" to
-                # update target params, as opposed to "mul" and "add",
-                # which would make new tensors.
+                # NB: We use an in-place operations "mul_", "add_" to update
+                # target params, as opposed to "mul" and "add", which would
+                # make new tensors.
                 p_targ.data.mul_(self.polyak)
                 p_targ.data.add_((1 - self.polyak) * p.data)
 
-    def get_action(self, o, a2, hidden, deterministic=False):
-        """Obtains actions from the correct actor
+    def get_action(self, o, greedy=False):
+        # Greedy action selection by the policy
+        return self.ac.act(torch.as_tensor(o, dtype=torch.float32))
 
-        returns (action, hidden_in)
-        """
-        return self.ac.act(torch.as_tensor(o, dtype=torch.float32),
-                           a2, hidden, deterministic)
+    def test_agent(self):
+        # TODO: Adjust get_action to obtain deterministic action
+        hidden_out = (torch.zeros([1, 1, hidden_size], dtype=torch.float).cuda(),
+                      torch.zeros([1, 1, hidden_size], dtype=torch.float).cuda()) \
+            if use_lstm else torch.zeros([1, 1, hidden_size],
+                                         dtype=torch.float).cuda()
+        for j in range(self.num_test_episodes):
+            o, d, ep_ret, ep_len = self.test_env.reset(), False, 0, 0
+            while not(d or (ep_len == self.max_ep_len)):
+                # Take deterministic actions at test time
+                o, r, d, _ = self.test_env.step(self.get_action(o))
+                ep_ret += r
+                ep_len += 1
+            self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
-    def act_on_test_env(self, test_env):
-        o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
-
-        # Recurrent shape
-        hidden_out = torch.zeros([1, 1, self.hidden_size],
-                                 dtype=torch.float).cuda()
-        a2 = test_env.action_space.sample()
-
-        # Only do done check here?
-        while not(d or (ep_len == self.max_ep_len)):
-            hidden_in = hidden_out
-            # TODO: Obtain this action from the policy
-            # deterministic=True doesn't fully work yet
-            a, hidden_out = self.get_action(o, a2, hidden_in, True)
-
-            o, r, d, _ = test_env.step(a)
-            ep_ret += r
-            ep_len += 1
-
-        # self.log_episode(ep_ret, ep_len)
-        test_env.reset()
-
-        # Final darts evaluation step
-        # task_info = test_env.darts_evaluation_step(
-        #     self.config.sparsify_input_alphas,
-        #     self.config.limit_skip_connections)
-
-        # return task_info
-
-    def act_on_env(self, env):
-
-        # Variables for episodic replay buffer
-        e_a, e_a2, e_o, e_o2, e_d, e_r = [], [], [], [], [], []
-
-        # Prepare for interaction with environment
-        # total_steps = steps_per_epoch * epochs
+    def train_agent(self):
         start_time = time.time()
+        o, ep_ret, ep_len = self.env.reset(), 0, 0
 
-        o, d, ep_ret, ep_len = env.reset(), False, 0, 0
-
-        # Recurrent shape
-        hidden_out = torch.zeros([1, 1, self.hidden_size],
-                                 dtype=torch.float).cuda()
-        a2 = env.action_space.sample()
-
-        # Prepare for interaction with environment
-        epochs = 5
-        total_steps = self.steps_per_epoch * epochs
-        max_ep_len = self.steps_per_epoch
-
-        # step counter
-        t = 0
-
-        for t in range(total_steps):
-            # Set hidden_in
-            hidden_in = hidden_out
+        for t in range(self.total_steps):
 
             # Until start_steps have elapsed, randomly sample actions
             # from a uniform distribution for better exploration. Afterwards,
             # use the learned policy.
-            # TODO: Obtain this action from the policy
             if t > self.start_steps:
-                a, hidden_out = self.get_action(o, a2, hidden_in)
+                a = self.ac.explore(o)
             else:
-                a = env.action_space.sample()
+                a = self.env.action_space.sample()
 
-            o2, r, d, _ = env.step(a)
+            o2, r, d, _ = self.env.step(a)
             ep_ret += r
             ep_len += 1
+
+            # TODO: Part of discrete SAC
+            # Clip reward to [-1.0, 1.0].
+            # clipped_reward = max(min(reward, 1.0), -1.0)
 
             # Ignore the "done" signal if it comes from hitting the time
             # horizon (that is, when it's an artificial terminal signal
             # that isn't based on the agent's state)
-            d = False if ep_len == max_ep_len else d
+            d = False if ep_len == self.max_ep_len else d
 
-            if t == 0:
-                init_hid_in = hidden_in
-                init_hid_out = hidden_out
-
-            # Episodic replay buffer
-            e_a.append(a)
-            e_a2.append(a2)
-            e_o.append(o)
-            e_o2.append(o2)
-            e_d.append(d)
-            e_r.append(r)
+            # Store experience to replay buffer
+            self.replay_buffer.store(o, a, r, o2, d)
 
             # Super critical, easy to overlook step: make sure to update
             # most recent observation!
             o = o2
-            a2 = a
 
             # End of trajectory handling
-        if d or (ep_len == max_ep_len):
-            # Store experience to replay buffer
-            e_a = np.asarray(e_a)
-            e_a2 = np.asarray(e_a2)
-            e_o = np.asarray(e_o)
-            e_o2 = np.asarray(e_o2)
-            e_d = np.asarray(e_d)
-            e_r = np.asarray(e_r)
-            self.replay_buffer.store(e_a2, e_o, e_a, e_r, e_o2,
-                                     init_hid_in, init_hid_out, e_d)
-            e_a, e_a2, e_o, e_o2, e_d, e_r = [], [], [], [], [], []
-
-            # logger.store(EpRet=ep_ret, EpLen=ep_len)
-
-            # Sample MDP from distribution of environments, RL2
-            # env.set_task(random.choice(ml1.train_tasks))
-
-            o, ep_ret, ep_len = env.reset(), 0, 0
+            if d or (ep_len == self.max_ep_len):
+                self.logger.store(EpRet=ep_ret, EpLen=ep_len)
+                o, ep_ret, ep_len = self.env.reset(), 0, 0
 
             # Update handling
-            if t >= self.update_after and t % self.update_every == 0 and \
-                    len(self.replay_buffer) > self.batch_size:
-                batch = self.replay_buffer.sample_batch(self.batch_size)
-                self.update(data=batch)
+            if t >= self.update_after and t % self.update_every == 0:
+                for _ in range(self.update_every):
+                    self.update()
 
-            t += 1
+            # End of epoch handling
+            if (t+1) % self.steps_per_epoch == 0:
+                epoch = (t+1) // self.steps_per_epoch
 
-        # End of epoch handling
-        # TODO: Add this logging
+                # Save model
+                if (epoch % self.save_freq == 0) or (epoch == self.epochs):
+                    self.logger.save_state({'env': self.env}, None)
 
-        # self.log_episode(ep_ret, ep_len)
+                # Test the performance of the deterministic version of the
+                # agent.
+                self.test_agent()
 
-        # Final darts evaluation step
-        # task_info = env.darts_evaluation_step(
-        #     self.config.sparsify_input_alphas,
-        #     self.config.limit_skip_connections)
+                # Log info about epoch
 
-        env.reset()
+                log_perf_board = ['EpRet', 'EpLen', 'TestEpRet',
+                                  'TestEpLen', 'Q2Vals',
+                                  'Q1Vals', 'LogPi']
+                log_loss_board = ['LossPi', 'LossQ']
+                log_board = {'Performance': log_perf_board,
+                             'Loss': log_loss_board}
 
-        # return task_info
+                # Update tensorboard
+                for key, value in log_board.items():
+                    for val in value:
+                        mean, std = self.logger.get_stats(val)
 
-    def log_episode(self, ep_ret, ep_len, ep_loss=None):
-        self.logger.add_scalar("Return", ep_ret, self.task_iter)
-        self.logger.add_scalar("Episode Length", ep_len, self.task_iter)
-        if ep_loss is not None:
-            self.logger.add_scalar("Loss", ep_loss, self.task_iter)
+                        if key == 'Performance':
+                            self.summary_writer.add_scalar(
+                                key+'/Average'+val, mean, t)
+                            self.summary_writer.add_scalar(
+                                key+'/Std'+val, std, t)
+                        else:
+                            self.summary_writer.add_scalar(
+                                key+'/'+val, mean, t)
+
+                epoch = (t+1) // self.steps_per_epoch
+                self.logger.log_tabular('Epoch', epoch)
+                self.logger.log_tabular('EpRet', with_min_and_max=True)
+                self.logger.log_tabular('EpLen', average_only=True)
+                self.logger.log_tabular('TestEpRet', with_min_and_max=True)
+                self.logger.log_tabular('TestEpLen', average_only=True)
+                self.logger.log_tabular('TotalEnvInteracts', t)
+                self.logger.log_tabular('Q2Vals', with_min_and_max=True)
+                self.logger.log_tabular('Q1Vals', with_min_and_max=True)
+                self.logger.log_tabular('LogPi', with_min_and_max=True)
+                self.logger.log_tabular('LossPi', average_only=True)
+                self.logger.log_tabular('LossQ', average_only=True)
+
+                self.logger.log_tabular('Time', time.time()-start_time)
+                self.logger.dump_tabular()
