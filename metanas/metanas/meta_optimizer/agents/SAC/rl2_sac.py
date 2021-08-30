@@ -25,6 +25,15 @@ class GRUReplayBuffer:
     def store(self, h_in, h_out, obs, next_obs, prev_act,
               act, prev_rew, rew, done):
 
+        if len(self.buffer) < self.max_size:
+            self.buffer.append(None)
+
+        # Resize actions to appropriate size
+        # act = np.hstack((np.expand_dims(act, axis=1),
+        #                  np.expand_dims(act, axis=1)))
+        # prev_act = np.hstack((np.expand_dims(prev_act, axis=1),
+        #                       np.expand_dims(prev_act, axis=1)))
+
         self.buffer[self.ptr] = (
             h_in, h_out, obs, next_obs, prev_act, act, prev_rew, rew, done)
 
@@ -58,8 +67,8 @@ class GRUReplayBuffer:
         batch = dict(
             hid_in=h_in, hid_out=h_out,
             obs=obs, next_obs=next_obs,
-            prev_act=prev_act, a=act,
-            prev_r=prev_rew, r=rew,
+            prev_act=prev_act, act=act,
+            prev_rew=prev_rew, rew=rew,
             done=done)
 
         return {k: torch.tensor(v, dtype=torch.float32).to(self.device)
@@ -69,13 +78,12 @@ class GRUReplayBuffer:
 
 class SAC:
     def __init__(self, env, test_env, ac_kwargs=dict(), max_ep_len=500,
-                 steps_per_epoch=4000, epochs=100, replay_size=int(1e6),
-                 gamma=0.99, polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100,
-                 start_steps=10000, update_after=1000, update_every=50,
+                 steps_per_epoch=12000, epochs=100, replay_size=int(1e6),
+                 gamma=0.99, polyak=0.995, lr=3e-3, alpha=0.2, batch_size=1,
+                 start_steps=10000, update_after=10000, update_every=50,
                  num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
                  seed=42, hidden_size=256):
 
-        # TODO: Set in inheritance class, RL_agent
         self.env = env
         self.test_env = test_env
         self.max_ep_len = max_ep_len
@@ -87,7 +95,6 @@ class SAC:
         self.steps_per_epoch = steps_per_epoch
         self.total_steps = steps_per_epoch * epochs
 
-        # Hidden size for GRU
         self.hidden_size = hidden_size
 
         self.device = torch.device(
@@ -129,7 +136,7 @@ class SAC:
         # Set replay buffer
         self.replay_buffer = GRUReplayBuffer(self.device, replay_size)
 
-        # Optimize alpha value for set to 0.2
+        # Optimize alpha value or set to 0.2
         self.entropy_target = 0.98 * (-np.log(1 / self.env.action_space.n))
         self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
         self.alpha = self.log_alpha.exp()
@@ -148,37 +155,40 @@ class SAC:
             '\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
 
     def compute_critic_loss(self, batch):
-        o, o2 = batch['obs'],  batch['obs2']
-        a, r, d = batch['act'], batch['rew'], batch['done']
+        o, o2 = batch['obs'],  batch['next_obs']
+        a, prev_a = batch['act'], batch['prev_act']
+        r, prev_r, d = batch['rew'], batch['prev_rew'], batch['done']
+
+        # Hidden layers of the LSTM layer
+        hid_in, hid_out = batch['hid_in'], batch['hid_out']
 
         r = r.unsqueeze(1)
         d = d.unsqueeze(1)
 
-        q1 = self.ac.q1(o)
-        q2 = self.ac.q2(o)
+        q1, _ = self.ac.q1(o, prev_a, prev_r, hid_in)
+        q2, _ = self.ac.q2(o, prev_a, prev_r, hid_in)
 
         with torch.no_grad():
             # Target actions come from *current* policy
-            _, a2, logp_a2 = self.ac.pi.sample(o2)
+            _, a2, logp_a2, _ = self.ac.pi.sample(o2, prev_a, prev_r, hid_out)
 
             # Target Q-values
-            q1_pi_targ = self.ac_targ.q1(o2)
-            q2_pi_targ = self.ac_targ.q2(o2)
+            q1_pi_targ, _ = self.ac_targ.q1(o2, prev_a, prev_r, hid_out)
+            q2_pi_targ, _ = self.ac_targ.q2(o2, prev_a, prev_r, hid_out)
 
             # Next Q-value
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
             next_q = (a2 * (q_pi_targ - self.alpha * logp_a2)
                       ).sum(-1).unsqueeze(-1)
-
             backup = r + self.gamma * (1 - d) * next_q
 
-        # MSE loss against Bellman backup
-        loss_q1 = ((q1.gather(1, a.long()) - backup).pow(2)).mean()
-        loss_q2 = ((q2.gather(1, a.long()) - backup).pow(2)).mean()
-        loss_q = loss_q1 + loss_q2
+        # print(a.shape, q1.shape, backup.shape)
 
-        # TODO: Include calculating TD errors for PER weights
+        # MSE loss against Bellman backup
+        loss_q1 = ((q1 - backup).pow(2)).mean()
+        loss_q2 = ((q2 - backup).pow(2)).mean()
+        loss_q = loss_q1 + loss_q2
 
         # Useful info for logging
         q_info = dict(Q1Vals=q1.cpu().detach().numpy(),
@@ -187,27 +197,38 @@ class SAC:
         return loss_q, q_info
 
     def compute_policy_loss(self, batch):
-        o = batch['obs']
+        o, o2 = batch['obs'],  batch['next_obs']
+        a, prev_a = batch['act'], batch['prev_act']
+        r, prev_r, d = batch['rew'], batch['prev_rew'], batch['done']
+
+        # Hidden layers of the LSTM layer
+        hid_in, hid_out = batch['hid_in'], batch['hid_out']
 
         # (Log of) probabilities to calculate expectations of Q and entropies.
         # action probability, log action probabilities
-        _, pi, logp_pi = self.ac.pi.sample(o)
+        _, pi, logp_pi, _ = self.ac.pi.sample(o, prev_a, prev_r, hid_in)
 
         with torch.no_grad():
-            q1_pi = self.ac.q1(o)
-            q2_pi = self.ac.q2(o)
+            q1_pi, _ = self.ac.q1(o, prev_a, prev_r, hid_in)
+            q2_pi, _ = self.ac.q2(o, prev_a, prev_r, hid_in)
             q_pi = torch.min(q1_pi, q2_pi)
 
         # Entropy-regularized policy loss
         loss_pi = (pi * (self.alpha.detach() * logp_pi - q_pi)).sum(-1).mean()
 
+        # Entropy
+        entropy = -torch.sum(pi * logp_pi, dim=1)
+
         # Useful info for logging
-        pi_info = dict(LogPi=logp_pi.cpu().detach().numpy())
+        pi_info = dict(LogPi=logp_pi.cpu().detach().numpy(),
+                       entropy=entropy.cpu().detach().numpy())
 
         return loss_pi, logp_pi, pi_info
 
     def update(self):
         batch = self.replay_buffer.sample_batch(self.batch_size)
+        # print(self.replay_buffer)
+        # print(batch['obs'].shape, batch['obs'])
 
         # First run one gradient descent step for Q1 and Q2
         self.q_optimizer.zero_grad()
@@ -238,21 +259,20 @@ class SAC:
 
         # Entropy values
         alpha_loss = -(self.log_alpha * (logp_pi.detach() +
-                       self.entropy_target)).mean()
+                                         self.entropy_target)).mean()
 
         self.alpha_optimizer.zero_grad()
         alpha_loss.backward()
         self.alpha_optimizer.step()
 
-        # TODO: Log entropy and alpha value
-
         self.alpha = self.log_alpha.exp()
+
+        # Recording alpha and alpha loss
+        self.logger.store(Alpha=alpha_loss.cpu().detach().numpy(),
+                          AlphaLoss=self.alpha.cpu().detach().numpy())
 
         # TODO: Hard update or polyak averaging
         # self.update_counter += 1
-
-        # if self.update_counter % self.config["fixed_network_update_freq"] == 0:
-        #     self.hard_update_target_network()
 
         # Finally, update target networks by polyak averaging.
         with torch.no_grad():
@@ -264,36 +284,57 @@ class SAC:
                 p_targ.data.mul_(self.polyak)
                 p_targ.data.add_((1 - self.polyak) * p.data)
 
-    def get_action(self, o, greedy=False):
+    def get_action(self, o, prev_a, prev_r, hidden_in, greedy=True):
         # Greedy action selection by the policy
-        return self.ac.act(torch.as_tensor(o, dtype=torch.float32))
+        return self.ac.act(o, prev_a, prev_r, hidden_in) if greedy \
+            else self.ac.explore(o, prev_a, prev_r, hidden_in)
 
     def test_agent(self):
-        # TODO: Adjust get_action to obtain deterministic action
-        hidden_out = (torch.zeros([1, 1, hidden_size], dtype=torch.float).cuda(),
-                      torch.zeros([1, 1, hidden_size], dtype=torch.float).cuda()) \
-            if use_lstm else torch.zeros([1, 1, hidden_size],
-                                         dtype=torch.float).cuda()
-        for j in range(self.num_test_episodes):
+        hidden_out = torch.zeros(
+            [1, 1, self.hidden_size], dtype=torch.float32).to(self.device)
+        a2 = self.test_env.action_space.sample()
+        r2 = 0
+
+        for _ in range(self.num_test_episodes):
             o, d, ep_ret, ep_len = self.test_env.reset(), False, 0, 0
+
             while not(d or (ep_len == self.max_ep_len)):
+                hidden_in = hidden_out
+                a, hidden_out = self.get_action(
+                    o, a2, r2, hidden_in, greedy=True)
+
                 # Take deterministic actions at test time
-                o, r, d, _ = self.test_env.step(self.get_action(o))
+                o, r, d, _ = self.test_env.step(a)
+
+                a2 = a
+                r2 = r
+
                 ep_ret += r
                 ep_len += 1
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     def train_agent(self):
+
+        # Variables for episodic replay buffer
+        e_a, e_prev_a, e_r, e_prev_r, e_o, e_o2, e_d = (
+            [] for i in range(7))
+
         start_time = time.time()
         o, ep_ret, ep_len = self.env.reset(), 0, 0
 
+        hidden_out = torch.zeros(
+            [1, 1, self.hidden_size], dtype=torch.float32).to(self.device)
+        a2 = self.test_env.action_space.sample()
+        r2 = 0
+
         for t in range(self.total_steps):
+            hidden_in = hidden_out
 
             # Until start_steps have elapsed, randomly sample actions
             # from a uniform distribution for better exploration. Afterwards,
             # use the learned policy.
             if t > self.start_steps:
-                a = self.ac.explore(o)
+                a, hidden_out = self.ac.explore(o, a2, r2, hidden_in)
             else:
                 a = self.env.action_space.sample()
 
@@ -302,7 +343,7 @@ class SAC:
             ep_len += 1
 
             # TODO: Part of discrete SAC
-            # Clip reward to [-1.0, 1.0].
+            # Clip reward to [-1.0, 1.0]
             # clipped_reward = max(min(reward, 1.0), -1.0)
 
             # Ignore the "done" signal if it comes from hitting the time
@@ -310,15 +351,35 @@ class SAC:
             # that isn't based on the agent's state)
             d = False if ep_len == self.max_ep_len else d
 
-            # Store experience to replay buffer
-            self.replay_buffer.store(o, a, r, o2, d)
+            if t == 0:
+                init_hid_in = hidden_in
+                init_hid_out = hidden_out
+
+            # Episodic replay buffer
+            e_a.append(a)
+            e_prev_a.append(a2)
+            e_r.append(r)
+            e_prev_r.append(r2)
+            e_o.append(o)
+            e_o2.append(o2)
+            e_d.append(d)
 
             # Super critical, easy to overlook step: make sure to update
             # most recent observation!
             o = o2
+            a2 = a
+            r2 = r
 
             # End of trajectory handling
             if d or (ep_len == self.max_ep_len):
+
+                if(len(e_o) > 2):
+                    self.replay_buffer.store(init_hid_in, init_hid_out, e_o, e_o2,
+                                             e_prev_a, e_a, e_prev_r, e_r, e_d)
+
+                e_a, e_prev_a, e_r, e_prev_r, e_o, e_o2, e_d = (
+                    [] for i in range(7))
+
                 self.logger.store(EpRet=ep_ret, EpLen=ep_len)
                 o, ep_ret, ep_len = self.env.reset(), 0, 0
 
