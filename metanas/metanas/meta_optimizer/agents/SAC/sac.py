@@ -32,7 +32,13 @@ class ReplayBuffer:
     def store(self, obs, act, rew, next_obs, done):
         self.obs_buf[self.ptr] = obs
         self.obs2_buf[self.ptr] = next_obs
+
+        print(act)
+        print(self.act_buf.shape)
+
         self.act_buf[self.ptr] = act
+
+        print(self.act_buf[self.ptr])
         self.rew_buf[self.ptr] = rew
         self.done_buf[self.ptr] = done
         self.ptr = (self.ptr+1) % self.max_size
@@ -136,6 +142,9 @@ class SAC:
 
         q1 = self.ac.q1(o)
         q2 = self.ac.q2(o)
+
+        # print(q1.shape, a)
+        # print(a.shape)
 
         with torch.no_grad():
             # Target actions come from *current* policy
