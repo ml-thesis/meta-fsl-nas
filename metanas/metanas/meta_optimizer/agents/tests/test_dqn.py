@@ -16,8 +16,8 @@ if __name__ == "__main__":
 
     logger_kwargs = setup_logger_kwargs("DQN", seed=42)
 
-    # qnet_kwargs = dict(hidden_size=[256]*2)
+    qnet_kwargs = dict(hidden_size=256)
     # Ignore the meta-model and config input
-    agent = DQN(env, test_env,  # qnet_kwargs=qnet_kwargs,
+    agent = DQN(env, test_env,  qnet_kwargs=qnet_kwargs,
                 logger_kwargs=logger_kwargs)
     agent.train_agent()
