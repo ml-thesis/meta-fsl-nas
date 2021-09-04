@@ -1,12 +1,11 @@
-from collections import deque
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
 import numpy as np
-
-import copy
+import collections
 import time
 import random
 
@@ -14,37 +13,129 @@ from metanas.meta_optimizer.agents.agent import RL_agent
 from metanas.meta_optimizer.agents.DQN.core import LSTMQNetwork, count_vars
 
 
-class ReplayBuffer:
-    """Memory for experience replay"""
+class EpisodicReplayBuffer:
+    def __init__(self, replay_size=int(1e6), max_ep_len=500,
+                 batch_size=1, time_step=8, device=None,
+                 random_update=False):
 
-    def __init__(self,  device, size):
+        if random_update is False and batch_size > 1:
+            raise AssertionError(
+                "Cant apply sequential updates with different sequence sizes in a batch")
 
-        self.memory = deque(maxlen=size)
-        self.ptr, self.size, self.max_size = 0, 0, size
+        self.random_update = random_update
+        self.max_ep_len = max_ep_len
+        self.batch_size = batch_size
+        self.time_step = time_step
         self.device = device
 
-    def store(self, episode):
-        self.memory.append(episode)
-        self.size += 1
+        self.memory = collections.deque(maxlen=replay_size)
 
-    def sample_batch(self, time_step, batch_size=32):
-        sampled_epsiodes = random.sample(self.memory, batch_size)
-        batch = []
-        for episode in sampled_epsiodes:
-            length = len(episode)+1-time_step  # if len(episode) + \
-            # 1-time_step > 0 else len(episode)
-            point = np.random.randint(0, length)
-            batch.append(episode[point:point+time_step])
-        return batch
+    def put(self, episode):
+        self.memory.append(episode)
+
+    def sample(self):
+        sampled_eps = []
+
+        if self.random_update:
+            sampled_episodes = random.sample(self.memory, self.batch_size)
+
+            min_step = self.max_ep_len
+            # get minimum time step possible
+            for episode in sampled_episodes:
+                min_step = min(min_step, len(episode))
+
+            for episode in sampled_episodes:
+                if min_step > self.time_step:
+                    idx = np.random.randint(0, len(episode)-self.time_step+1)
+                    sample = episode.sample(
+                        time_step=self.time_step,
+                        idx=idx)
+                else:
+                    idx = np.random.randint(0, len(episode)-min_step+1)
+                    sample = episode.sample(
+                        time_step=min_step,
+                        idx=idx)
+                sampled_eps.append(sample)
+        else:
+            idx = np.random.randint(0, len(self.memory))
+            sampled_eps.append(self.memory[idx].sample())
+
+        return self._sample_to_tensor(sampled_eps, len(sampled_eps[0]['obs']))
+
+    def _sample_to_tensor(self, sample, seq_len):
+        obs = [sample[i]["obs"] for i in range(self.batch_size)]
+        act = [sample[i]["acts"] for i in range(self.batch_size)]
+        rew = [sample[i]["rews"] for i in range(self.batch_size)]
+        next_obs = [sample[i]["next_obs"] for i in range(self.batch_size)]
+        done = [sample[i]["done"] for i in range(self.batch_size)]
+
+        obs = torch.FloatTensor(obs).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        act = torch.LongTensor(act).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        rew = torch.FloatTensor(rew).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        next_obs = torch.FloatTensor(next_obs).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        done = torch.FloatTensor(done).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+
+        return obs, act, rew, next_obs, done, seq_len
+
+
+class EpisodeMemory:
+    """Tracks the transitions within an episode
+    """
+
+    def __init__(self, random_update):
+        self.obs = []
+        self.action = []
+        self.reward = []
+        self.next_obs = []
+        self.done = []
+
+        self.random_update = random_update
+
+    def put(self, transition):
+        self.obs.append(transition[0])
+        self.action.append(transition[1])
+        self.reward.append(transition[2])
+        self.next_obs.append(transition[3])
+        self.done.append(transition[4])
+
+    def sample(self, time_step=None, idx=None):
+        obs = np.array(self.obs)
+        action = np.array(self.action)
+        reward = np.array(self.reward)
+        next_obs = np.array(self.next_obs)
+        done = np.array(self.done)
+
+        if self.random_update is True:
+            obs = obs[idx:idx+time_step]
+            action = action[idx:idx+time_step]
+            reward = reward[idx:idx+time_step]
+            next_obs = next_obs[idx:idx+time_step]
+            done = done[idx:idx+time_step]
+
+        return dict(obs=obs,
+                    acts=action,
+                    rews=reward,
+                    next_obs=next_obs,
+                    done=done)
+
+    def __len__(self):
+        return len(self.obs)
 
 
 class DRQN(RL_agent):
     def __init__(self, env, test_env, max_ep_len=500, steps_per_epoch=4000,
-                 epochs=100, gamma=0.99, lr=3e-4, batch_size=64,
+                 epochs=100, gamma=0.99, lr=1e-4, batch_size=16,
                  num_test_episodes=10, logger_kwargs=dict(), seed=42,
                  save_freq=1, qnet_kwargs=dict(),
-                 replay_size=int(1e6), update_after=5000,
-                 update_every=5, update_target=2000, time_step=16):
+                 replay_size=int(1e6), update_after=2000,
+                 update_every=1, update_target=2, polyak=0.995, time_step=20,
+                 random_update=True,
+                 epsilon=0.1, final_epsilon=0.001, epsilon_decay=0.995):
         super().__init__(env, test_env, max_ep_len, steps_per_epoch,
                          epochs, gamma, lr, batch_size, seed,
                          num_test_episodes, logger_kwargs)
@@ -57,7 +148,8 @@ class DRQN(RL_agent):
         self.update_after = update_after
         self.update_target = update_target
 
-        self.time_step = time_step
+        self.polyak = polyak
+        self.random_update = random_update
         self.hidden_size = qnet_kwargs["hidden_size"]
 
         obs_dim = self.env.observation_space.shape[0]
@@ -65,20 +157,28 @@ class DRQN(RL_agent):
 
         self.online_network = LSTMQNetwork(
             obs_dim, act_dim, **qnet_kwargs).to(self.device)
-
         self.target_network = LSTMQNetwork(
             obs_dim, act_dim, **qnet_kwargs).to(self.device)
+        self.target_network.load_state_dict(self.online_network.state_dict())
 
-        self.loss_fn = nn.MSELoss()
-        self.replay_buffer = ReplayBuffer(self.device, replay_size)
+        self.episode_buffer = EpisodicReplayBuffer(
+            random_update=self.random_update,
+            replay_size=replay_size,
+            max_ep_len=self.max_ep_len,
+            batch_size=batch_size,
+            device=self.device,
+            time_step=time_step)
 
-        self.optimizer = optim.Adam(
+        self.optimizer = optim.RMSprop(
             params=self.online_network.parameters(), lr=lr)
 
         # Decaying eps-greedy
-        self.final_epsilon = 0.02
-        self.epsilon_decay = 10000
-        self.epsilon = 0.9
+        self.epsilon = epsilon
+        self.final_epsilon = final_epsilon
+        self.epsilon_decay = epsilon_decay
+
+        # Track when to update
+        self.update_counter = 0
 
         # Count variables
         var_counts = tuple(count_vars(module)
@@ -90,98 +190,79 @@ class DRQN(RL_agent):
     def get_action(self, o, hidden_state, cell_state):
         """Selects action from the learned Q-function
         """
-        o = torch.Tensor(o).to(self.device)
+        o = torch.Tensor(o).float().to(self.device).unsqueeze(0).unsqueeze(0)
+
         if torch.rand(1)[0] > self.epsilon:
             with torch.no_grad():
-                act, hidden_state = self.online_network(
-                    o, 1, 1, hidden_state, cell_state)
+                act, h, c = self.online_network(
+                    o, hidden_state, cell_state)
                 act = torch.argmax(act).item()
         else:
             with torch.no_grad():
-                _, hidden_state = self.online_network(
-                    o, 1, 1, hidden_state, cell_state)
+                _, h, c = self.online_network(
+                    o, hidden_state, cell_state)
             act = self.env.action_space.sample()
-        return act, hidden_state
+        return act, h, c
+
+    def init_hidden_states(self, batch_size):
+        h = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
+        c = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
+        return h, c
 
     def update(self):
-        h, c = self.init_hidden_states(self.batch_size)
+        obs, act, rew, next_obs, done, seq_len = self.episode_buffer.sample()
 
-        batch = self.replay_buffer.sample_batch(
-            time_step=self.time_step, batch_size=self.batch_size)
+        h_targ, c_targ = self.init_hidden_states(batch_size=self.batch_size)
+        h, c = self.init_hidden_states(batch_size=self.batch_size)
 
-        current_states = []
-        acts = []
-        rewards = []
-        next_states = []
+        q_values, _, _ = self.online_network(obs, h, c)
+        q_value = q_values.gather(2, act)
 
-        for b in batch:
-            cs, ac, rw, ns = [], [], [], []
-            for element in b:
-                cs.append(element[0])
-                ac.append(element[1])
-                rw.append(element[2])
-                ns.append(element[3])
-            current_states.append(cs)
-            acts.append(ac)
-            rewards.append(rw)
-            next_states.append(ns)
+        q_target, _, _ = self.target_network(next_obs, h_targ, c_targ)
+        next_q_value = q_target.max(2)[0].view(
+            self.batch_size, seq_len, -1).detach()
 
-        current_states = np.array(current_states)
-        acts = np.array(acts)
-        rewards = np.array(rewards)
-        next_states = np.array(next_states)
+        # Bellman backup equation
+        expected_q_value = rew + self.gamma * next_q_value * (1 - done)
 
-        torch_current_states = torch.from_numpy(
-            current_states).float().to(self.device)
-        torch_acts = torch.from_numpy(acts).long().to(self.device)
-        torch_rewards = torch.from_numpy(rewards).float().to(self.device)
-        torch_next_states = torch.from_numpy(
-            next_states).float().to(self.device)
+        # TODO: Possibility of different losses
+        # loss = F.smooth_l1_loss(q_value, expected_q_value)
+        loss = ((q_value - expected_q_value)**2).mean()
 
-        Q_next, _ = self.target_network.forward(
-            torch_next_states, batch_size=self.batch_size, time_step=self.time_step,
-            hidden_state=h, cell_state=c)
-        Q_next_max, __ = Q_next.detach().max(dim=1)
-        target_values = torch_rewards[:,
-                                      self.time_step-1] + (self.gamma * Q_next_max)
-
-        Q_s, _ = self.online_network.forward(torch_current_states, self.batch_size,
-                                             time_step=self.time_step, hidden_state=h, cell_state=c)
-        Q_s_a = Q_s.gather(
-            dim=1, index=torch_acts[:, self.time_step-1].unsqueeze(dim=1)).squeeze(dim=1)
-
-        loss = nn.MSELoss()(Q_s_a, target_values)
-
-        #  save performance measure
-        # loss_stat.append(loss.item())
-
-        # make previous grad zero
         self.optimizer.zero_grad()
-
-        # backward
         loss.backward()
 
-        # update params
+        # Gradient clipping
+        for param in self.online_network.parameters():
+            param.grad.data.clamp_(-1, 1)
+
         self.optimizer.step()
 
-    def test_agent(self):
-        h, c = self.init_hidden_states(batch_size=1)
+        if self.update_counter % self.update_target == 0:
+            for target_param, p in zip(self.target_network.parameters(),
+                                       self.online_network.parameters()):
+                target_param.data.mul_(self.polyak)
+                target_param.data.add_((1 - self.polyak) * p.data)
 
-        # TODO: Adjust get_action to obtain deterministic action
+        self.update_counter += 1
+
+        # Useful info for logging
+        q_info = dict(QVals=q_values.cpu().detach().numpy())
+        self.logger.store(LossQ=loss.item(), **q_info)
+
+    def test_agent(self):
         for j in range(self.num_test_episodes):
+            h, c = self.init_hidden_states(batch_size=1)
             o, d, ep_ret, ep_len = self.test_env.reset(), False, 0, 0
             while not(d or (ep_len == self.max_ep_len)):
-                # Take deterministic actions at test time
-                a, (h, c) = self.get_action(o, h, c)
+                a, h, c = self.get_action(o, h, c)
                 o, r, d, _ = self.test_env.step(a)
                 ep_ret += r
                 ep_len += 1
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     def train_agent(self):
-
-        current_episode = []
-
+        episode_record = EpisodeMemory(self.random_update)
         h, c = self.init_hidden_states(batch_size=1)
 
         start_time = time.time()
@@ -189,7 +270,7 @@ class DRQN(RL_agent):
 
         for t in range(self.total_steps):
 
-            a, (h, c) = self.get_action(o, h, c)
+            a, h, c = self.get_action(o, h, c)
             o2, r, d, _ = self.env.step(a)
             ep_ret += r
             ep_len += 1
@@ -199,7 +280,7 @@ class DRQN(RL_agent):
             # that isn't based on the agent's state)
             d = False if ep_len == self.max_ep_len else d
 
-            current_episode.append((o, a, r, o2))
+            episode_record.put([o, a, r, o2, d])
 
             # Super critical, easy to overlook step: make sure to update
             # most recent observation!
@@ -207,32 +288,21 @@ class DRQN(RL_agent):
 
             # End of trajectory handling
             if d or (ep_len == self.max_ep_len):
-
-                if len(current_episode) >= self.time_step:
-                    self.replay_buffer.store(current_episode)
-                current_episode = []
-
-                h, c = self.init_hidden_states(batch_size=1)
+                self.episode_buffer.put(episode_record)
+                episode_record = EpisodeMemory(self.random_update)
 
                 self.logger.store(EpRet=ep_ret, EpLen=ep_len, Eps=self.epsilon)
                 o, ep_ret, ep_len = self.env.reset(), 0, 0
 
-            # Update epsilon
-            if t % 500 == 0 and self.epsilon > self.final_epsilon:
+                h, c = self.init_hidden_states(batch_size=1)
 
-                self.epsilon = self.final_epsilon + (self.epsilon - self.final_epsilon) * \
-                    np.exp(-1. * (t/self.epsilon_decay))
-
-                # self.epsilon -= (self.init_epsilon -
-                #                  self.final_epsilon)/self.total_steps
+                # Update epsilon and Linear annealing
+                self.epsilon = max(self.final_epsilon,
+                                   self.epsilon * self.epsilon_decay)
 
             # Update handling
             if t >= self.update_after and t % self.update_every == 0:
                 self.update()
-
-            if self.total_steps % self.update_target == 0:
-                self.target_network.load_state_dict(
-                    self.online_network.state_dict())
 
             # End of epoch handling
             if (t+1) % self.steps_per_epoch == 0:
@@ -246,12 +316,9 @@ class DRQN(RL_agent):
                 # agent.
                 self.test_agent()
 
-                # # Log info about epoch
-
+                # Log info about epoch
                 log_perf_board = ['EpRet', 'EpLen', 'TestEpRet',
-                                  'TestEpLen']
-                #   , 'Q2Vals',
-                #   'Q1Vals', 'LogPi']
+                                  'TestEpLen']  # , 'QVals']
                 # log_loss_board = ['LossQ']
                 log_board = {'Performance': log_perf_board}  # ,
                 #  'Loss': log_loss_board}
@@ -278,10 +345,7 @@ class DRQN(RL_agent):
                 self.logger.log_tabular('TestEpLen', average_only=True)
                 self.logger.log_tabular('Epsilon', self.epsilon)
                 self.logger.log_tabular('TotalEnvInteracts', t)
-                # self.logger.log_tabular('Q2Vals', with_min_and_max=True)
-                # self.logger.log_tabular('Q1Vals', with_min_and_max=True)
-                # self.logger.log_tabular('LogPi', with_min_and_max=True)
-                # self.logger.log_tabular('LossPi', average_only=True)
+                # self.logger.log_tabular('QVals', with_min_and_max=True)
                 # self.logger.log_tabular('LossQ', average_only=True)
 
                 self.logger.log_tabular('Time', time.time()-start_time)
