@@ -129,11 +129,11 @@ class EpisodeMemory:
 
 class DRQN(RL_agent):
     def __init__(self, env, test_env, max_ep_len=500, steps_per_epoch=4000,
-                 epochs=100, gamma=0.99, lr=1e-4, batch_size=16,
+                 epochs=100, gamma=0.99, lr=3e-2, batch_size=8,
                  num_test_episodes=10, logger_kwargs=dict(), seed=42,
                  save_freq=1, qnet_kwargs=dict(),
                  replay_size=int(1e6), update_after=2000,
-                 update_every=1, update_target=2, polyak=0.995, time_step=20,
+                 update_every=2, update_target=4, polyak=0.995, time_step=20,
                  random_update=True,
                  epsilon=0.1, final_epsilon=0.001, epsilon_decay=0.995):
         super().__init__(env, test_env, max_ep_len, steps_per_epoch,
@@ -161,6 +161,7 @@ class DRQN(RL_agent):
             obs_dim, act_dim, **qnet_kwargs).to(self.device)
         self.target_network.load_state_dict(self.online_network.state_dict())
 
+        # Replay size back to 100?
         self.episode_buffer = EpisodicReplayBuffer(
             random_update=self.random_update,
             replay_size=replay_size,
@@ -169,7 +170,7 @@ class DRQN(RL_agent):
             device=self.device,
             time_step=time_step)
 
-        self.optimizer = optim.RMSprop(
+        self.optimizer = optim.Adam(
             params=self.online_network.parameters(), lr=lr)
 
         # Decaying eps-greedy
@@ -247,7 +248,7 @@ class DRQN(RL_agent):
         self.update_counter += 1
 
         # Useful info for logging
-        q_info = dict(QVals=q_values.cpu().detach().numpy())
+        q_info = dict(QVals=q_values.cpu().mean().detach().numpy())
         self.logger.store(LossQ=loss.item(), **q_info)
 
     def test_agent(self):
@@ -318,10 +319,10 @@ class DRQN(RL_agent):
 
                 # Log info about epoch
                 log_perf_board = ['EpRet', 'EpLen', 'TestEpRet',
-                                  'TestEpLen']  # , 'QVals']
-                # log_loss_board = ['LossQ']
-                log_board = {'Performance': log_perf_board}  # ,
-                #  'Loss': log_loss_board}
+                                  'TestEpLen', 'QVals']
+                log_loss_board = ['LossQ']
+                log_board = {'Performance': log_perf_board,
+                             'Loss': log_loss_board}
 
                 # Update tensorboard
                 for key, value in log_board.items():
@@ -345,8 +346,8 @@ class DRQN(RL_agent):
                 self.logger.log_tabular('TestEpLen', average_only=True)
                 self.logger.log_tabular('Epsilon', self.epsilon)
                 self.logger.log_tabular('TotalEnvInteracts', t)
-                # self.logger.log_tabular('QVals', with_min_and_max=True)
-                # self.logger.log_tabular('LossQ', average_only=True)
+                self.logger.log_tabular('QVals', with_min_and_max=True)
+                self.logger.log_tabular('LossQ', average_only=True)
 
                 self.logger.log_tabular('Time', time.time()-start_time)
                 self.logger.dump_tabular()
