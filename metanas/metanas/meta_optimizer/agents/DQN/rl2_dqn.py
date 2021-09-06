@@ -10,7 +10,7 @@ import time
 import random
 
 from metanas.meta_optimizer.agents.agent import RL_agent
-from metanas.meta_optimizer.agents.DQN.core import LSTMQNetwork, count_vars
+from metanas.meta_optimizer.agents.DQN.core import RL2QNetwork, count_vars
 
 
 class EpisodicReplayBuffer:
@@ -67,20 +67,26 @@ class EpisodicReplayBuffer:
         act = [sample[i]["acts"] for i in range(self.batch_size)]
         rew = [sample[i]["rews"] for i in range(self.batch_size)]
         next_obs = [sample[i]["next_obs"] for i in range(self.batch_size)]
+        prev_act = [sample[i]["prev_act"] for i in range(self.batch_size)]
+        prev_rew = [sample[i]["prev_rew"] for i in range(self.batch_size)]
         done = [sample[i]["done"] for i in range(self.batch_size)]
 
         obs = torch.FloatTensor(obs).reshape(
             self.batch_size, seq_len, -1).to(self.device)
         act = torch.LongTensor(act).reshape(
-            self.batch_size, seq_len, -1).to(self.device)
+            self.batch_size, seq_len).to(self.device)
         rew = torch.FloatTensor(rew).reshape(
             self.batch_size, seq_len, -1).to(self.device)
         next_obs = torch.FloatTensor(next_obs).reshape(
             self.batch_size, seq_len, -1).to(self.device)
+        prev_act = torch.FloatTensor(prev_act).reshape(
+            self.batch_size, seq_len).to(self.device)
+        prev_rew = torch.FloatTensor(prev_rew).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
         done = torch.FloatTensor(done).reshape(
             self.batch_size, seq_len, -1).to(self.device)
 
-        return obs, act, rew, next_obs, done, seq_len
+        return (obs, act, rew, next_obs, prev_act, prev_rew, done), seq_len
 
 
 class EpisodeMemory:
@@ -92,6 +98,8 @@ class EpisodeMemory:
         self.action = []
         self.reward = []
         self.next_obs = []
+        self.prev_act = []
+        self.prev_rew = []
         self.done = []
 
         self.random_update = random_update
@@ -101,13 +109,17 @@ class EpisodeMemory:
         self.action.append(transition[1])
         self.reward.append(transition[2])
         self.next_obs.append(transition[3])
-        self.done.append(transition[4])
+        self.prev_act.append(transition[4])
+        self.prev_rew.append(transition[5])
+        self.done.append(transition[6])
 
     def sample(self, time_step=None, idx=None):
         obs = np.array(self.obs)
         action = np.array(self.action)
         reward = np.array(self.reward)
         next_obs = np.array(self.next_obs)
+        prev_act = np.array(self.prev_act)
+        prev_rew = np.array(self.prev_rew)
         done = np.array(self.done)
 
         if self.random_update is True:
@@ -115,21 +127,25 @@ class EpisodeMemory:
             action = action[idx:idx+time_step]
             reward = reward[idx:idx+time_step]
             next_obs = next_obs[idx:idx+time_step]
+            prev_act = prev_act[idx:idx+time_step]
+            prev_rew = prev_rew[idx:idx+time_step]
             done = done[idx:idx+time_step]
 
         return dict(obs=obs,
                     acts=action,
                     rews=reward,
                     next_obs=next_obs,
+                    prev_rew=prev_rew,
+                    prev_act=prev_act,
                     done=done)
 
     def __len__(self):
         return len(self.obs)
 
 
-class DRQN(RL_agent):
+class DQN(RL_agent):
     def __init__(self, env, test_env, max_ep_len=500, steps_per_epoch=4000,
-                 epochs=100, gamma=0.99, lr=3e-4, batch_size=32,
+                 epochs=100, gamma=0.99, lr=5e-4, batch_size=32,
                  num_test_episodes=10, logger_kwargs=dict(), seed=42,
                  save_freq=1, qnet_kwargs=dict(),
                  replay_size=int(1e6), update_after=3500,
@@ -155,13 +171,12 @@ class DRQN(RL_agent):
         obs_dim = self.env.observation_space.shape[0]
         act_dim = self.env.action_space.n
 
-        self.online_network = LSTMQNetwork(
+        self.online_network = RL2QNetwork(
             obs_dim, act_dim, **qnet_kwargs).to(self.device)
-        self.target_network = LSTMQNetwork(
+        self.target_network = RL2QNetwork(
             obs_dim, act_dim, **qnet_kwargs).to(self.device)
         self.target_network.load_state_dict(self.online_network.state_dict())
 
-        # Replay size back to 100?
         self.episode_buffer = EpisodicReplayBuffer(
             random_update=self.random_update,
             replay_size=replay_size,
@@ -188,47 +203,67 @@ class DRQN(RL_agent):
         self.logger.log(
             '\nNumber of parameters: \t q1: %d, \t q2: %d\n' % var_counts)
 
-    def get_action(self, o, hidden_state, cell_state):
+    def get_action(self, o, a, r, hidden_state):
         """Selects action from the learned Q-function
         """
         o = torch.Tensor(o).float().to(self.device).unsqueeze(0).unsqueeze(0)
+        a = torch.Tensor([a]).float().to(self.device).unsqueeze(0)
+        r = torch.Tensor([r]).float().to(
+            self.device).unsqueeze(0).unsqueeze(-1)
 
         if torch.rand(1)[0] > self.epsilon:
             with torch.no_grad():
-                act, h, c = self.online_network(
-                    o, hidden_state, cell_state)
+                act, h = self.online_network(
+                    o, a, r, hidden_state)
                 act = torch.argmax(act).item()
         else:
             with torch.no_grad():
-                _, h, c = self.online_network(
-                    o, hidden_state, cell_state)
+                _, h = self.online_network(
+                    o, a, r, hidden_state)
             act = self.env.action_space.sample()
-        return act, h, c
+        return act, h
 
     def init_hidden_states(self, batch_size):
         h = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
-        c = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
-        return h, c
+        # c = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
+        return h  # , c
 
     def update(self):
-        obs, act, rew, next_obs, done, seq_len = self.episode_buffer.sample()
+        batch, seq_len = self.episode_buffer.sample()
+        obs, act, rew, next_obs, prev_act, prev_rew, done = batch
 
-        h_targ, c_targ = self.init_hidden_states(batch_size=self.batch_size)
-        h, c = self.init_hidden_states(batch_size=self.batch_size)
+        # TODO: Burn-in steps for the RNN
 
-        q_values, _, _ = self.online_network(obs, h, c)
-        q_value = q_values.gather(2, act)
+        h_targ = self.init_hidden_states(batch_size=self.batch_size)
+        h = self.init_hidden_states(batch_size=self.batch_size)
+
+        q_values, _ = self.online_network(obs,
+                                          prev_act,
+                                          prev_rew,
+                                          h)
+
+        q_value = q_values.gather(-1, act.unsqueeze(-1))
 
         with torch.no_grad():
-            q_target, _, _ = self.target_network(next_obs, h_targ, c_targ)
-            next_q_value = q_target.max(2)[0].view(
-                self.batch_size, seq_len, -1).detach()
+            q_target, _ = self.target_network(
+                next_obs,
+                act,
+                rew,
+                h_targ)
 
-        # Bellman backup equation
-        expected_q_value = rew + self.gamma * next_q_value * (1 - done)
+            next_q_values, _ = self.online_network(
+                next_obs,
+                act,
+                rew,
+                h_targ
+            )
+            next_action = torch.argmax(next_q_values, dim=-1)
+            target_q_value = q_target.gather(-1, next_action.unsqueeze(-1))
+
+        expected_q_value = rew + self.gamma * target_q_value * (1 - done)
 
         # TODO: Possibility of different losses
-        loss = F.smooth_l1_loss(q_value, expected_q_value)
+        loss = F.smooth_l1_loss(q_value, expected_q_value.detach())
         # loss = ((q_value - expected_q_value)**2).mean()
 
         self.optimizer.zero_grad()
@@ -259,25 +294,31 @@ class DRQN(RL_agent):
 
     def test_agent(self):
         for j in range(self.num_test_episodes):
-            h, c = self.init_hidden_states(batch_size=1)
+            h = self.init_hidden_states(batch_size=1)
             o, d, ep_ret, ep_len = self.test_env.reset(), False, 0, 0
+            a2 = self.env.action_space.sample()
+            r2 = 0
             while not(d or (ep_len == self.max_ep_len)):
-                a, h, c = self.get_action(o, h, c)
+                a, h = self.get_action(o, a2, r2, h)
                 o, r, d, _ = self.test_env.step(a)
                 ep_ret += r
                 ep_len += 1
+                r2 = r
+                a2 = a
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     def train_agent(self):
         episode_record = EpisodeMemory(self.random_update)
-        h, c = self.init_hidden_states(batch_size=1)
+        h = self.init_hidden_states(batch_size=1)
 
         start_time = time.time()
         o, ep_ret, ep_len = self.env.reset(), 0, 0
+        a2 = self.env.action_space.sample()
+        r2 = 0
 
         for t in range(self.total_steps):
 
-            a, h, c = self.get_action(o, h, c)
+            a, h = self.get_action(o, a2, r2, h)
             o2, r, d, _ = self.env.step(a)
             ep_ret += r
             ep_len += 1
@@ -287,11 +328,14 @@ class DRQN(RL_agent):
             # that isn't based on the agent's state)
             d = False if ep_len == self.max_ep_len else d
 
-            episode_record.put([o, a, r, o2, d])
+            episode_record.put([o, a, r, o2, a2, r2, d])
 
             # Super critical, easy to overlook step: make sure to update
             # most recent observation!
             o = o2
+            # Set previous action and reward
+            r2 = r
+            a2 = a
 
             # End of trajectory handling
             if d or (ep_len == self.max_ep_len):
@@ -301,7 +345,7 @@ class DRQN(RL_agent):
                 self.logger.store(EpRet=ep_ret, EpLen=ep_len, Eps=self.epsilon)
                 o, ep_ret, ep_len = self.env.reset(), 0, 0
 
-                h, c = self.init_hidden_states(batch_size=1)
+                h = self.init_hidden_states(batch_size=1)
 
                 # Update epsilon and Linear annealing
                 self.epsilon = max(self.final_epsilon,

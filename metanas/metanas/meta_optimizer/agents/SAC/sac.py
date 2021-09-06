@@ -33,12 +33,12 @@ class ReplayBuffer:
         self.obs_buf[self.ptr] = obs
         self.obs2_buf[self.ptr] = next_obs
 
-        print(act)
-        print(self.act_buf.shape)
+        # print(act)
+        # print(self.act_buf.shape)
 
         self.act_buf[self.ptr] = act
 
-        print(self.act_buf[self.ptr])
+        # print(self.act_buf[self.ptr])
         self.rew_buf[self.ptr] = rew
         self.done_buf[self.ptr] = done
         self.ptr = (self.ptr+1) % self.max_size
@@ -58,7 +58,7 @@ class ReplayBuffer:
 class SAC:
     def __init__(self, env, test_env, ac_kwargs=dict(), max_ep_len=500,
                  steps_per_epoch=4000, epochs=100, replay_size=int(1e6),
-                 gamma=0.99, polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100,
+                 gamma=0.99, polyak=0.995, lr=3e-3, alpha=0.2, batch_size=100,
                  start_steps=10000, update_after=1000, update_every=50,
                  num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
                  seed=42):
@@ -157,10 +157,15 @@ class SAC:
             # Next Q-value
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
+            # print((a2 * (q_pi_targ - self.alpha * logp_a2)).shape)
             next_q = (a2 * (q_pi_targ - self.alpha * logp_a2)
                       ).sum(-1).unsqueeze(-1)
+            # print("next_q", next_q)
 
             backup = r + self.gamma * (1 - d) * next_q
+
+        # print((a2 * (q_pi_targ - self.alpha * logp_a2)).shape)
+        # print(backup.shape)
 
         # MSE loss against Bellman backup
         loss_q1 = ((q1.gather(1, a.long()) - backup).pow(2)).mean()
@@ -241,9 +246,6 @@ class SAC:
         self.logger.store(Alpha=alpha_loss.cpu().detach().numpy(),
                           AlphaLoss=self.alpha.cpu().detach().numpy())
 
-        # TODO: Hard update or polyak averaging
-        # self.update_counter += 1
-
         # Finally, update target networks by polyak averaging.
         with torch.no_grad():
             for p, p_targ in zip(self.ac.parameters(),
@@ -287,10 +289,6 @@ class SAC:
             o2, r, d, _ = self.env.step(a)
             ep_ret += r
             ep_len += 1
-
-            # TODO: Part of discrete SAC
-            # Clip reward to [-1.0, 1.0]
-            # clipped_reward = max(min(reward, 1.0), -1.0)
 
             # Ignore the "done" signal if it comes from hitting the time
             # horizon (that is, when it's an artificial terminal signal
