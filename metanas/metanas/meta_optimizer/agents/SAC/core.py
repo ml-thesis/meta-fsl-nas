@@ -34,34 +34,40 @@ def count_vars(module):
     return sum([np.prod(p.shape) for p in module.parameters()])
 
 
+def create_one_hot(act, act_dim):
+    index = torch.eye(act_dim).cuda()
+    return index[act.long()]
+
+
 """GRU Actor Critic implementation for discrete action space"""
 
 
 class GRUCategoricalPolicy(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_dim, activation):
+    def __init__(self, obs_dim, act_dim, hidden_size=64, activation=nn.ReLU):
         super().__init__()
         self.activation = activation()
+        self.act_dim = act_dim
 
-        self.linear1 = nn.Linear(obs_dim+3, hidden_dim)
-        self.gru1 = nn.GRU(6, hidden_dim)
-        self.linear2 = nn.Linear(hidden_dim, act_dim)
+        self.Linear1 = nn.Linear(obs_dim, hidden_size)
+        self.gru = nn.GRU(hidden_size+act_dim+1,  # +1 for the reward
+                          hidden_size,
+                          batch_first=True)
+        self.Linear2 = nn.Linear(hidden_size, act_dim)
 
-    def act(self, obs, prev_action, prev_reward, hidden_in):
-
-        # print(obs.shape, prev_action.shape, prev_reward.shape)
+    def act(self, obs, prev_act, prev_rew, hid):
 
         action_logits, hidden_out = self.forward(
-            obs, prev_action, prev_reward, hidden_in)
+            obs, prev_act, prev_rew, hid)
 
         # Greedy action selection
         greedy_actions = torch.argmax(action_logits, dim=-1)
 
         return greedy_actions, hidden_out
 
-    def sample(self, obs, prev_action, prev_reward, hidden_in):
+    def sample(self, obs, prev_act, prev_rew, hid):
 
         action_logits, hidden_out = self.forward(
-            obs, prev_action, prev_reward, hidden_in)
+            obs, prev_act, prev_rew, hid)
 
         action_probs = F.softmax(action_logits, dim=-1)
         action_dist = Categorical(action_probs)
@@ -73,72 +79,61 @@ class GRUCategoricalPolicy(nn.Module):
 
         return actions, action_probs, log_action_probs, hidden_out
 
-    def forward(self, obs, prev_action, prev_reward, hidden_in):
+    def forward(self, obs, prev_act, prev_rew, hid):
 
-        # print(obs.shape, prev_action.shape, prev_reward.shape, hidden_in.shape)
+        self.gru.flatten_parameters()
 
-        prev_reward = prev_reward.unsqueeze(
-            0).permute(1, 2, 0)
-        prev_action = prev_action.unsqueeze(
-            0).permute(1, 2, 0)
+        prev_act = create_one_hot(prev_act, self.act_dim)
+        gru_input = self.activation(self.Linear1(obs))
+        gru_input = torch.cat(
+            [
+                gru_input,
+                prev_act,
+                prev_rew
+            ],
+            dim=2,
+        )
 
-        # print(obs.shape, prev_action.shape, prev_reward.shape, hidden_in.shape)
+        # unroll the GRU network
+        gru_out, hid_out = self.gru(gru_input.float(), hid.float())
+        q = self.Linear2(gru_out)
 
-        concat = torch.cat([obs, prev_action, prev_reward], -1)
-        # gru_branch = self.activation(self.linear1(concat))
-        # print(gru_branch)
-        hidden_in = torch.zeros(
-            1, concat.shape[1], 256, dtype=torch.float32).cuda()
-        gru_branch, hidden_out = self.gru1(concat, hidden_in)
-        action_logits = self.activation(self.linear2(gru_branch))
-
-        # print(action_logits.shape)
-        # TODO: Permutations
-        action_logits = action_logits.permute(1, 0, 2)
-
-        return action_logits, hidden_out
+        return q, hid_out
 
 
 class GRUQNetwork(nn.Module):
 
-    def __init__(self, obs_dim, act_dim, hidden_dim, activation):
+    def __init__(self, obs_dim, act_dim, hidden_size=64, activation=nn.ReLU):
         super().__init__()
         self.activation = activation()
+        self.act_dim = act_dim
 
-        # obs_dim + 2 for prev action and prev reward
-        # self.linear1 = nn.Linear(obs_dim+3, hidden_dim)
-        self.gru1 = nn.GRU(6, hidden_dim)
-        self.linear2 = nn.Linear(hidden_dim, 1)
+        self.Linear1 = nn.Linear(obs_dim, hidden_size)
+        self.gru = nn.GRU(hidden_size+act_dim+1,  # +1 for the reward
+                          hidden_size,
+                          batch_first=True)
+        self.Linear2 = nn.Linear(hidden_size, act_dim)
 
-    def forward(self, obs, prev_action, prev_reward, hidden_in):
+    def forward(self, obs, prev_act, prev_rew, hid):
 
-        # TODO: One-hot encode actions?
+        self.gru.flatten_parameters()
 
-        # print(obs.shape, prev_action.shape, prev_reward.shape, hidden_in.shape)
+        prev_act = create_one_hot(prev_act, self.act_dim)
+        gru_input = self.activation(self.Linear1(obs))
+        gru_input = torch.cat(
+            [
+                gru_input,
+                prev_act,
+                prev_rew
+            ],
+            dim=2,
+        )
 
-        prev_reward = prev_reward.unsqueeze(
-            0).permute(1, 2, 0)
-        prev_action = prev_action.unsqueeze(
-            0).permute(1, 2, 0)
+        # unroll the GRU network
+        gru_out, hid_out = self.gru(gru_input.float(), hid.float())
+        q = self.Linear2(gru_out)
 
-        # print(obs.shape, prev_action.shape, prev_reward.shape, hidden_in.shape)
-
-        concat = torch.cat([obs, prev_action,
-                            prev_reward], -1)
-        # print(concat.shape[1])
-
-        hidden_in = torch.zeros(
-            1, concat.shape[1], 256, dtype=torch.float32).cuda()
-
-        # gru_branch = self.activation(self.linear1(concat))
-        gru_branch, hidden_out = self.gru1(concat, hidden_in)
-        x = self.activation(self.linear2(gru_branch))
-
-        # TODO: X permute?
-        # print(x.shape)
-        x = x.permute(1, 0, 2)
-
-        return x, hidden_out
+        return q, hid_out
 
 
 class GRUActorCritic(nn.Module):
@@ -155,32 +150,17 @@ class GRUActorCritic(nn.Module):
         self.q1 = GRUQNetwork(obs_dim, act_dim, hidden_size[0], activation)
         self.q2 = GRUQNetwork(obs_dim, act_dim, hidden_size[0], activation)
 
-    def explore(self, obs, prev_a, prev_reward, hidden_in):
+    def explore(self, obs, prev_a, prev_r, hid):
         # action selection using softmax
         with torch.no_grad():
+            action, _, _, hid = self.pi.sample(obs, prev_a, prev_r, hid)
+        return action.item(), hid
 
-            action, _, _, hidden_out = self.pi.sample(
-                torch.as_tensor(obs, dtype=torch.float32).unsqueeze(
-                    0).unsqueeze(0).cuda(),
-                torch.as_tensor(prev_a, dtype=torch.float32).unsqueeze(
-                    0).unsqueeze(0).cuda(),
-                torch.as_tensor(prev_reward, dtype=torch.float32).unsqueeze(
-                    0).unsqueeze(0).cuda(),
-                hidden_in)
-        return action.item(), hidden_out
-
-    def act(self, obs, prev_a, prev_reward, hidden_in):
+    def act(self, obs, prev_a, prev_r, hid):
         # Greedy action selection by the policy, argmax
         with torch.no_grad():
-            action, hidden_out = self.pi.act(
-                torch.as_tensor(obs, dtype=torch.float32).unsqueeze(
-                    0).unsqueeze(0).cuda(),
-                torch.as_tensor(prev_a, dtype=torch.float32).unsqueeze(
-                    0).unsqueeze(0).cuda(),
-                torch.as_tensor(prev_reward, dtype=torch.float32).unsqueeze(
-                    0).unsqueeze(0).cuda(),
-                hidden_in)
-        return action.item(), hidden_out
+            action, hid = self.pi.act(obs, prev_a, prev_r, hid)
+        return action.item(), hid
 
 
 """MLP Actor Critic implementation for discrete action space"""
@@ -215,11 +195,15 @@ class MLPQNetwork(nn.Module):
 
     def __init__(self, obs_dim, act_dim, hidden_size, activation):
         super().__init__()
-        self.q = mlp([obs_dim] + hidden_size + [act_dim], activation)
+        self.a = mlp([obs_dim] + hidden_size + [act_dim], activation)
+        self.v = mlp([obs_dim] + hidden_size + [1], activation)
 
     def forward(self, obs):
-        q = self.q(obs)
-        return q
+
+        a = self.a(obs)
+        v = self.v(obs)
+
+        return v + a - a.mean(1, keepdim=True)
 
 
 class MLPActorCritic(nn.Module):

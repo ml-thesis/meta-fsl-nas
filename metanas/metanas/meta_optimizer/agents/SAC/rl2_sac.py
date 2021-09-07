@@ -1,6 +1,7 @@
 import copy
 import time
 import random
+import collections
 import itertools
 import numpy as np
 
@@ -12,75 +13,141 @@ from metanas.meta_optimizer.agents.utils.logx import EpochLogger
 from metanas.meta_optimizer.agents.SAC.core import GRUActorCritic, count_vars
 
 
-class GRUReplayBuffer:
-    """An experience replay buffer for GRU agents, sampling full
-    trajectories
-    """
+class EpisodicReplayBuffer:
+    def __init__(self, replay_size=int(1e6), max_ep_len=500,
+                 batch_size=1, time_step=8, device=None,
+                 random_update=False):
 
-    def __init__(self, device, size):
-        self.buffer = []
-        self.ptr, self.size, self.max_size = 0, 0, size
+        if random_update is False and batch_size > 1:
+            raise AssertionError(
+                "Cant apply sequential updates with different sequence sizes in a batch")
+
+        self.random_update = random_update
+        self.max_ep_len = max_ep_len
+        self.batch_size = batch_size
+        self.time_step = time_step
         self.device = device
 
-    def store(self, h_in, h_out, obs, next_obs, prev_act,
-              act, prev_rew, rew, done):
+        self.memory = collections.deque(maxlen=replay_size)
 
-        if len(self.buffer) < self.max_size:
-            self.buffer.append(None)
+    def put(self, episode):
+        self.memory.append(episode)
 
-        # Resize actions to appropriate size
-        # act = np.hstack((np.expand_dims(act, axis=1),
-        #                  np.expand_dims(act, axis=1)))
-        # prev_act = np.hstack((np.expand_dims(prev_act, axis=1),
-        #                       np.expand_dims(prev_act, axis=1)))
+    def sample(self):
+        sampled_eps = []
 
-        self.buffer[self.ptr] = (
-            h_in, h_out, obs, next_obs, prev_act, act, prev_rew, rew, done)
+        if self.random_update:
+            sampled_episodes = random.sample(self.memory, self.batch_size)
 
-        self.ptr = (self.ptr+1) % self.max_size
-        self.size = min(self.size+1, self.max_size)
+            min_step = self.max_ep_len
+            # get minimum time step possible
+            for episode in sampled_episodes:
+                min_step = min(min_step, len(episode))
 
-    def sample_batch(self, batch_size=32):
-        h_in, h_out, obs, next_obs, prev_act, act, prev_rew, rew, \
-            done = [], [], [], [], [], [], [], [], []
-        batch = random.sample(self.buffer, batch_size)
+            for episode in sampled_episodes:
+                if min_step > self.time_step:
+                    idx = np.random.randint(0, len(episode)-self.time_step+1)
+                    sample = episode.sample(
+                        time_step=self.time_step,
+                        idx=idx)
+                else:
+                    idx = np.random.randint(0, len(episode)-min_step+1)
+                    sample = episode.sample(
+                        time_step=min_step,
+                        idx=idx)
+                sampled_eps.append(sample)
+        else:
+            idx = np.random.randint(0, len(self.memory))
+            sampled_eps.append(self.memory[idx].sample())
 
-        for sample in batch:
-            hi, ho, o, o2, prev_a, a, prev_r, r, d = sample
-            obs.append(o)
-            next_obs.append(o2)
-            prev_act.append(prev_a)
-            act.append(a)
-            prev_rew.append(prev_r)
-            rew.append(r)
-            done.append(d)
+        return self._sample_to_tensor(sampled_eps, len(sampled_eps[0]['obs']))
 
-            # Hidden states dimensions
-            # shape (1, batch_size, hidden_size)
-            h_in.append(hi)
-            h_out.append(ho)
+    def _sample_to_tensor(self, sample, seq_len):
+        obs = [sample[i]["obs"] for i in range(self.batch_size)]
+        act = [sample[i]["acts"] for i in range(self.batch_size)]
+        rew = [sample[i]["rews"] for i in range(self.batch_size)]
+        next_obs = [sample[i]["next_obs"] for i in range(self.batch_size)]
+        prev_act = [sample[i]["prev_act"] for i in range(self.batch_size)]
+        prev_rew = [sample[i]["prev_rew"] for i in range(self.batch_size)]
+        done = [sample[i]["done"] for i in range(self.batch_size)]
 
-        # concatenate along the batch dim
-        h_in = torch.cat(h_in, dim=-2)
-        h_out = torch.cat(h_out, dim=-2)
+        obs = torch.FloatTensor(obs).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        act = torch.LongTensor(act).reshape(
+            self.batch_size, seq_len).to(self.device)
+        rew = torch.FloatTensor(rew).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        next_obs = torch.FloatTensor(next_obs).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        prev_act = torch.FloatTensor(prev_act).reshape(
+            self.batch_size, seq_len).to(self.device)
+        prev_rew = torch.FloatTensor(prev_rew).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
+        done = torch.FloatTensor(done).reshape(
+            self.batch_size, seq_len, -1).to(self.device)
 
-        batch = dict(
-            hid_in=h_in, hid_out=h_out,
-            obs=obs, next_obs=next_obs,
-            prev_act=prev_act, act=act,
-            prev_rew=prev_rew, rew=rew,
-            done=done)
+        return (obs, act, rew, next_obs, prev_act, prev_rew, done), seq_len
 
-        return {k: torch.tensor(v, dtype=torch.float32).to(self.device)
-                if not isinstance(v, tuple) else v
-                for k, v in batch.items()}
+
+class EpisodeMemory:
+    """Tracks the transitions within an episode
+    """
+
+    def __init__(self, random_update):
+        self.obs = []
+        self.action = []
+        self.reward = []
+        self.next_obs = []
+        self.prev_act = []
+        self.prev_rew = []
+        self.done = []
+
+        self.random_update = random_update
+
+    def put(self, transition):
+        self.obs.append(transition[0])
+        self.action.append(transition[1])
+        self.reward.append(transition[2])
+        self.next_obs.append(transition[3])
+        self.prev_act.append(transition[4])
+        self.prev_rew.append(transition[5])
+        self.done.append(transition[6])
+
+    def sample(self, time_step=None, idx=None):
+        obs = np.array(self.obs)
+        action = np.array(self.action)
+        reward = np.array(self.reward)
+        next_obs = np.array(self.next_obs)
+        prev_act = np.array(self.prev_act)
+        prev_rew = np.array(self.prev_rew)
+        done = np.array(self.done)
+
+        if self.random_update is True:
+            obs = obs[idx:idx+time_step]
+            action = action[idx:idx+time_step]
+            reward = reward[idx:idx+time_step]
+            next_obs = next_obs[idx:idx+time_step]
+            prev_act = prev_act[idx:idx+time_step]
+            prev_rew = prev_rew[idx:idx+time_step]
+            done = done[idx:idx+time_step]
+
+        return dict(obs=obs,
+                    acts=action,
+                    rews=reward,
+                    next_obs=next_obs,
+                    prev_rew=prev_rew,
+                    prev_act=prev_act,
+                    done=done)
+
+    def __len__(self):
+        return len(self.obs)
 
 
 class SAC:
     def __init__(self, env, test_env, ac_kwargs=dict(), max_ep_len=500,
-                 steps_per_epoch=12000, epochs=100, replay_size=int(1e6),
-                 gamma=0.99, polyak=0.995, lr=3e-3, alpha=0.2, batch_size=1,
-                 start_steps=10000, update_after=10000, update_every=50,
+                 steps_per_epoch=4000, epochs=100, replay_size=int(1e6),
+                 gamma=0.99, polyak=0.995, lr=1e-3, alpha=0.2, batch_size=32,
+                 start_steps=10000, update_after=1000, update_every=20,
                  num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
                  seed=42, hidden_size=256):
 
@@ -94,6 +161,8 @@ class SAC:
         self.num_test_episodes = num_test_episodes
         self.steps_per_epoch = steps_per_epoch
         self.total_steps = steps_per_epoch * epochs
+        self.update_multiplier = 20
+        self.random_update = True
 
         self.hidden_size = hidden_size
 
@@ -133,8 +202,18 @@ class SAC:
         self.q_params = itertools.chain(self.ac.q1.parameters(),
                                         self.ac.q2.parameters())
 
+        self.target_q_params = itertools.chain(self.ac_targ.q1.parameters(),
+                                               self.ac_targ.q2.parameters())
+
         # Set replay buffer
-        self.replay_buffer = GRUReplayBuffer(self.device, replay_size)
+        self.episode_buffer = EpisodicReplayBuffer(
+            random_update=True,
+            replay_size=replay_size,
+            max_ep_len=max_ep_len,
+            batch_size=batch_size,
+            device=self.device,
+            time_step=20
+        )
 
         # Optimize alpha value or set to 0.2
         self.entropy_target = 0.98 * (-np.log(1 / self.env.action_space.n))
@@ -154,63 +233,68 @@ class SAC:
         self.logger.log(
             '\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
 
-    def compute_critic_loss(self, batch):
-        o, o2 = batch['obs'],  batch['next_obs']
-        a, prev_a = batch['act'], batch['prev_act']
-        r, prev_r, d = batch['rew'], batch['prev_rew'], batch['done']
+    def init_hidden_states(self, batch_size):
+        h = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
+        return h
 
-        # Hidden layers of the LSTM layer
-        hid_in, hid_out = batch['hid_in'], batch['hid_out']
+    def compute_critic_loss(self, batch, seq_len):
+        obs, act, rew, next_obs, prev_act, prev_rew, done = batch
 
-        r = r.unsqueeze(1)
-        d = d.unsqueeze(1)
+        h_targ1 = self.init_hidden_states(batch_size=self.batch_size)
+        h_targ2 = self.init_hidden_states(batch_size=self.batch_size)
+        h = self.init_hidden_states(batch_size=self.batch_size)
+        h1 = self.init_hidden_states(batch_size=self.batch_size)
+        h2 = self.init_hidden_states(batch_size=self.batch_size)
 
-        q1, _ = self.ac.q1(o, prev_a, prev_r, hid_in)
-        q2, _ = self.ac.q2(o, prev_a, prev_r, hid_in)
+        q1, _ = self.ac.q1(obs, prev_act, prev_rew, h1)
+        q2, _ = self.ac.q2(obs, prev_act, prev_rew, h2)
 
         with torch.no_grad():
             # Target actions come from *current* policy
-            _, a2, logp_a2, _ = self.ac.pi.sample(o2, prev_a, prev_r, hid_out)
+            _, a2, logp_a2, _ = self.ac.pi.sample(next_obs, act, rew, h)
 
             # Target Q-values
-            q1_pi_targ, _ = self.ac_targ.q1(o2, prev_a, prev_r, hid_out)
-            q2_pi_targ, _ = self.ac_targ.q2(o2, prev_a, prev_r, hid_out)
+            q1_pi_targ, _ = self.ac_targ.q1(
+                next_obs, act, rew, h_targ1)
+            q2_pi_targ, _ = self.ac_targ.q2(
+                next_obs, act, rew, h_targ2)
 
             # Next Q-value
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
+            # To map R^|A| -> R
             next_q = (a2 * (q_pi_targ - self.alpha * logp_a2)
-                      ).sum(-1).unsqueeze(-1)
-            backup = r + self.gamma * (1 - d) * next_q
+                      ).sum(dim=-1).unsqueeze(-1)
 
-        # print(a.shape, q1.shape, backup.shape)
+            backup = (rew + self.gamma * (1 - done) * next_q)
 
         # MSE loss against Bellman backup
-        loss_q1 = ((q1 - backup).pow(2)).mean()
-        loss_q2 = ((q2 - backup).pow(2)).mean()
+        loss_q1 = (
+            (q1.gather(-1, act.unsqueeze(-1).long()) - backup).pow(2)).mean()
+        loss_q2 = (
+            (q2.gather(-1, act.unsqueeze(-1).long()) - backup).pow(2)).mean()
         loss_q = loss_q1 + loss_q2
 
         # Useful info for logging
-        q_info = dict(Q1Vals=q1.cpu().detach().numpy(),
-                      Q2Vals=q2.cpu().detach().numpy())
+        q_info = dict(Q1Vals=q1.cpu().detach().mean(1).numpy(),
+                      Q2Vals=q2.cpu().detach().mean(1).numpy())
 
         return loss_q, q_info
 
-    def compute_policy_loss(self, batch):
-        o, o2 = batch['obs'],  batch['next_obs']
-        a, prev_a = batch['act'], batch['prev_act']
-        r, prev_r, d = batch['rew'], batch['prev_rew'], batch['done']
+    def compute_policy_loss(self, batch, seq_len):
+        obs, act, rew, _, prev_act, prev_rew, _ = batch
 
-        # Hidden layers of the LSTM layer
-        hid_in, hid_out = batch['hid_in'], batch['hid_out']
+        h = self.init_hidden_states(batch_size=self.batch_size)
+        h1 = self.init_hidden_states(batch_size=self.batch_size)
+        h2 = self.init_hidden_states(batch_size=self.batch_size)
 
         # (Log of) probabilities to calculate expectations of Q and entropies.
         # action probability, log action probabilities
-        _, pi, logp_pi, _ = self.ac.pi.sample(o, prev_a, prev_r, hid_in)
+        _, pi, logp_pi, _ = self.ac.pi.sample(obs, prev_act, prev_rew, h)
 
         with torch.no_grad():
-            q1_pi, _ = self.ac.q1(o, prev_a, prev_r, hid_in)
-            q2_pi, _ = self.ac.q2(o, prev_a, prev_r, hid_in)
+            q1_pi, _ = self.ac.q1(obs, prev_act, prev_rew, h1)
+            q2_pi, _ = self.ac.q2(obs, prev_act, prev_rew, h2)
             q_pi = torch.min(q1_pi, q2_pi)
 
         # Entropy-regularized policy loss
@@ -220,19 +304,17 @@ class SAC:
         entropy = -torch.sum(pi * logp_pi, dim=1)
 
         # Useful info for logging
-        pi_info = dict(LogPi=logp_pi.cpu().detach().numpy(),
-                       entropy=entropy.cpu().detach().numpy())
+        pi_info = dict(LogPi=logp_pi.cpu().detach().mean(1).numpy(),
+                       entropy=entropy.cpu().detach().mean(1).numpy())
 
         return loss_pi, logp_pi, pi_info
 
     def update(self):
-        batch = self.replay_buffer.sample_batch(self.batch_size)
-        # print(self.replay_buffer)
-        # print(batch['obs'].shape, batch['obs'])
+        batch, seq_len = self.episode_buffer.sample()
 
         # First run one gradient descent step for Q1 and Q2
         self.q_optimizer.zero_grad()
-        loss_q, q_info = self.compute_critic_loss(batch)
+        loss_q, q_info = self.compute_critic_loss(batch, seq_len)
         loss_q.backward()
         self.q_optimizer.step()
 
@@ -246,7 +328,7 @@ class SAC:
 
         # Next run one gradient descent step for pi.
         self.pi_optimizer.zero_grad()
-        loss_pi, logp_pi, pi_info = self.compute_policy_loss(batch)
+        loss_pi, logp_pi, pi_info = self.compute_policy_loss(batch, seq_len)
         loss_pi.backward()
         self.pi_optimizer.step()
 
@@ -271,9 +353,6 @@ class SAC:
         self.logger.store(Alpha=alpha_loss.cpu().detach().numpy(),
                           AlphaLoss=self.alpha.cpu().detach().numpy())
 
-        # TODO: Hard update or polyak averaging
-        # self.update_counter += 1
-
         # Finally, update target networks by polyak averaging.
         with torch.no_grad():
             for p, p_targ in zip(self.ac.parameters(),
@@ -284,14 +363,18 @@ class SAC:
                 p_targ.data.mul_(self.polyak)
                 p_targ.data.add_((1 - self.polyak) * p.data)
 
-    def get_action(self, o, prev_a, prev_r, hidden_in, greedy=True):
+    def get_action(self, o, prev_a, prev_r, hid, greedy=True):
+        o = torch.Tensor(o).float().to(self.device).unsqueeze(0).unsqueeze(0)
+        prev_a = torch.Tensor([prev_a]).float().to(self.device).unsqueeze(0)
+        prev_r = torch.Tensor([prev_r]).float().to(
+            self.device).unsqueeze(0).unsqueeze(-1)
+
         # Greedy action selection by the policy
-        return self.ac.act(o, prev_a, prev_r, hidden_in) if greedy \
-            else self.ac.explore(o, prev_a, prev_r, hidden_in)
+        return self.ac.act(o, prev_a, prev_r, hid) if greedy \
+            else self.ac.explore(o, prev_a, prev_r, hid)
 
     def test_agent(self):
-        hidden_out = torch.zeros(
-            [1, 1, self.hidden_size], dtype=torch.float32).to(self.device)
+        h = self.init_hidden_states(batch_size=1)
         a2 = self.test_env.action_space.sample()
         r2 = 0
 
@@ -299,42 +382,35 @@ class SAC:
             o, d, ep_ret, ep_len = self.test_env.reset(), False, 0, 0
 
             while not(d or (ep_len == self.max_ep_len)):
-                hidden_in = hidden_out
-                a, hidden_out = self.get_action(
-                    o, a2, r2, hidden_in, greedy=True)
+                a, h = self.get_action(
+                    o, a2, r2, h, greedy=True)
 
-                # Take deterministic actions at test time
-                o, r, d, _ = self.test_env.step(a)
+                o2, r, d, _ = self.test_env.step(a)
 
-                a2 = a
+                o = o2
                 r2 = r
+                a2 = a
 
                 ep_ret += r
                 ep_len += 1
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     def train_agent(self):
-
-        # Variables for episodic replay buffer
-        e_a, e_prev_a, e_r, e_prev_r, e_o, e_o2, e_d = (
-            [] for i in range(7))
+        episode_record = EpisodeMemory(self.random_update)
+        h = self.init_hidden_states(batch_size=1)
 
         start_time = time.time()
         o, ep_ret, ep_len = self.env.reset(), 0, 0
-
-        hidden_out = torch.zeros(
-            [1, 1, self.hidden_size], dtype=torch.float32).to(self.device)
-        a2 = self.test_env.action_space.sample()
+        a2 = self.env.action_space.sample()
         r2 = 0
 
         for t in range(self.total_steps):
-            hidden_in = hidden_out
 
             # Until start_steps have elapsed, randomly sample actions
             # from a uniform distribution for better exploration. Afterwards,
             # use the learned policy.
             if t > self.start_steps:
-                a, hidden_out = self.ac.explore(o, a2, r2, hidden_in)
+                a, h = self.get_action(o, a2, r2, h, greedy=False)
             else:
                 a = self.env.action_space.sample()
 
@@ -342,50 +418,33 @@ class SAC:
             ep_ret += r
             ep_len += 1
 
-            # TODO: Part of discrete SAC
-            # Clip reward to [-1.0, 1.0]
-            # clipped_reward = max(min(reward, 1.0), -1.0)
-
             # Ignore the "done" signal if it comes from hitting the time
             # horizon (that is, when it's an artificial terminal signal
             # that isn't based on the agent's state)
             d = False if ep_len == self.max_ep_len else d
 
-            if t == 0:
-                init_hid_in = hidden_in
-                init_hid_out = hidden_out
-
-            # Episodic replay buffer
-            e_a.append(a)
-            e_prev_a.append(a2)
-            e_r.append(r)
-            e_prev_r.append(r2)
-            e_o.append(o)
-            e_o2.append(o2)
-            e_d.append(d)
+            episode_record.put([o, a, r/100.0, o2, a2, r2/100.0, d])
 
             # Super critical, easy to overlook step: make sure to update
             # most recent observation!
             o = o2
-            a2 = a
+            # Set previous action and reward
             r2 = r
+            a2 = a
 
             # End of trajectory handling
             if d or (ep_len == self.max_ep_len):
-
-                if(len(e_o) > 2):
-                    self.replay_buffer.store(init_hid_in, init_hid_out, e_o, e_o2,
-                                             e_prev_a, e_a, e_prev_r, e_r, e_d)
-
-                e_a, e_prev_a, e_r, e_prev_r, e_o, e_o2, e_d = (
-                    [] for i in range(7))
+                self.episode_buffer.put(episode_record)
+                episode_record = EpisodeMemory(self.random_update)
 
                 self.logger.store(EpRet=ep_ret, EpLen=ep_len)
                 o, ep_ret, ep_len = self.env.reset(), 0, 0
 
+                h = self.init_hidden_states(batch_size=1)
+
             # Update handling
             if t >= self.update_after and t % self.update_every == 0:
-                for _ in range(self.update_every):
+                for _ in range(self.update_multiplier):
                     self.update()
 
             # End of epoch handling

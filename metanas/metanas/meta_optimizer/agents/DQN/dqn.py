@@ -1,5 +1,6 @@
 import torch
 import torch.optim as optim
+import torch.nn.functional as F
 
 import numpy as np
 
@@ -31,11 +32,11 @@ class ReplayBuffer:
 
 class DQN(RL_agent):
     def __init__(self, env, test_env, max_ep_len=500, steps_per_epoch=4000,
-                 epochs=100, gamma=0.99, lr=3e-4, batch_size=32,
+                 epochs=100, gamma=0.99, lr=5e-3, batch_size=64,
                  num_test_episodes=10, logger_kwargs=dict(), seed=42,
                  save_freq=1, qnet_kwargs=dict(),
                  replay_size=int(1e6), update_after=2000,
-                 update_every=2, update_target=4, polyak=0.995,
+                 update_every=1, update_target=1, polyak=0.995,
                  epsilon=0.1, final_epsilon=0.001, epsilon_decay=0.995):
         super().__init__(env, test_env, max_ep_len, steps_per_epoch,
                          epochs, gamma, lr, batch_size, seed,
@@ -47,7 +48,7 @@ class DQN(RL_agent):
         self.save_freq = save_freq
         self.update_every = update_every
         self.update_after = update_after
-        self.update_target = update_target  # 2500 for naive
+        self.update_target = update_target
 
         self.polyak = polyak
         self.hidden_size = qnet_kwargs["hidden_size"]
@@ -64,7 +65,7 @@ class DQN(RL_agent):
         # Replay Buffer
         self.replay_buffer = ReplayBuffer(replay_size)
 
-        self.optimizer = optim.RMSprop(
+        self.optimizer = optim.Adam(
             params=self.online_network.parameters(), lr=lr)
 
         # Decaying eps-greedy
@@ -114,7 +115,8 @@ class DQN(RL_agent):
         next_q_value = next_q_values.max(1)[0]
         expected_q_value = reward + self.gamma * next_q_value * (1 - done)
 
-        loss = ((q_value - expected_q_value)**2).mean()
+        loss = F.smooth_l1_loss(q_value, expected_q_value)
+        # ((q_value - expected_q_value)**2).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -130,7 +132,7 @@ class DQN(RL_agent):
             # self.target_network.load_state_dict(
             #     self.online_network.state_dict())
 
-            # Applying soft-update of the target policy
+            # Applying soft-update of the target network
             for target_param, p in zip(self.target_network.parameters(),
                                        self.online_network.parameters()):
                 target_param.data.mul_(self.polyak)
@@ -168,7 +170,7 @@ class DQN(RL_agent):
             # that isn't based on the agent's state)
             d = False if ep_len == self.max_ep_len else d
 
-            self.replay_buffer.push(o, a, o2, r, d)
+            self.replay_buffer.push(o, a, o2, r/100.0, d)
 
             # Super critical, easy to overlook step: make sure to update
             # most recent observation!

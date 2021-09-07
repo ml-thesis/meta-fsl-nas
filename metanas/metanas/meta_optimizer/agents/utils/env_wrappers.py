@@ -12,14 +12,14 @@ class CartPolePOMDPWrapper(gym.ObservationWrapper):
     Num     Observation               Min                     Max
     0       Cart Position             -4.8                    4.8
     1       Cart Velocity             -Inf                    Inf
-    2       Pole Angle                -0.418 rad (-24 deg)    0.418 rad (24 deg)
+    2       Pole Angle                -0.418 rad (-24 deg)    0.418 rad
     3       Pole Angular Velocity     -Inf                    Inf
 
     Reduced to POMDP by removing the cart and angle velocity.
     Type: Box(2)
     Num     Observation               Min                     Max
     0       Cart Position             -4.8                    4.8
-    1       Pole Angle                -0.418 rad (-24 deg)    0.418 rad (24 deg)
+    1       Pole Angle                -0.418 rad (-24 deg)    0.418 rad
     """
 
     def __init__(self, env):
