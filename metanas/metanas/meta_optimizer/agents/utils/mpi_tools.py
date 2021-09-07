@@ -1,5 +1,8 @@
 from mpi4py import MPI
-import os, subprocess, sys
+import os
+import subprocess
+import sys
+import torch
 import numpy as np
 
 
@@ -19,7 +22,7 @@ def mpi_fork(n, bind_to_core=False):
 
         bind_to_core (bool): Bind each MPI process to a core.
     """
-    if n<=1: 
+    if n <= 1:
         return
     if os.getenv("IN_MPI") is None:
         env = os.environ.copy()
@@ -37,21 +40,27 @@ def mpi_fork(n, bind_to_core=False):
 
 
 def msg(m, string=''):
-    print(('Message from %d: %s \t '%(MPI.COMM_WORLD.Get_rank(), string))+str(m))
+    print(('Message from %d: %s \t ' %
+          (MPI.COMM_WORLD.Get_rank(), string))+str(m))
+
 
 def proc_id():
     """Get rank of calling process."""
     return MPI.COMM_WORLD.Get_rank()
 
+
 def allreduce(*args, **kwargs):
     return MPI.COMM_WORLD.Allreduce(*args, **kwargs)
+
 
 def num_procs():
     """Count active MPI processes."""
     return MPI.COMM_WORLD.Get_size()
 
+
 def broadcast(x, root=0):
     MPI.COMM_WORLD.Bcast(x, root=root)
+
 
 def mpi_op(x, op):
     x, scalar = ([x], True) if np.isscalar(x) else (x, False)
@@ -60,13 +69,16 @@ def mpi_op(x, op):
     allreduce(x, buff, op=op)
     return buff[0] if scalar else buff
 
+
 def mpi_sum(x):
     return mpi_op(x, MPI.SUM)
+
 
 def mpi_avg(x):
     """Average a scalar or vector over MPI processes."""
     return mpi_sum(x) / num_procs()
-    
+
+
 def mpi_statistics_scalar(x, with_min_and_max=False):
     """
     Get mean/std and optional min/max of scalar x across MPI processes.
@@ -90,3 +102,35 @@ def mpi_statistics_scalar(x, with_min_and_max=False):
         global_max = mpi_op(np.max(x) if len(x) > 0 else -np.inf, op=MPI.MAX)
         return mean, std, global_min, global_max
     return mean, std
+
+
+def setup_pytorch_for_mpi():
+    """
+    Avoid slowdowns caused by each separate process's PyTorch using
+    more than its fair share of CPU resources.
+    """
+    #print('Proc %d: Reporting original number of Torch threads as %d.'%(proc_id(), torch.get_num_threads()), flush=True)
+    if torch.get_num_threads() == 1:
+        return
+    fair_num_threads = max(int(torch.get_num_threads() / num_procs()), 1)
+    torch.set_num_threads(fair_num_threads)
+    #print('Proc %d: Reporting new number of Torch threads as %d.'%(proc_id(), torch.get_num_threads()), flush=True)
+
+
+def mpi_avg_grads(module):
+    """ Average contents of gradient buffers across MPI processes. """
+    if num_procs() == 1:
+        return
+    for p in module.parameters():
+        p_grad_numpy = p.grad.numpy()   # numpy view of tensor data
+        avg_p_grad = mpi_avg(p.grad)
+        p_grad_numpy[:] = avg_p_grad[:]
+
+
+def sync_params(module):
+    """ Sync all parameters of module across all MPI processes. """
+    if num_procs() == 1:
+        return
+    for p in module.parameters():
+        p_numpy = p.data.numpy()
+        broadcast(p_numpy)
