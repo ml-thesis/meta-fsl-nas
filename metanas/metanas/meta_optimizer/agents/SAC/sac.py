@@ -91,6 +91,10 @@ class SAC:
                                  env.action_space, **ac_kwargs).to(self.device)
         self.ac_targ = copy.deepcopy(self.ac)
 
+        # Set up optimizers for policy and q-function
+        self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.lr)
+        self.q_optimizer = Adam(self.q_params, lr=self.lr)
+
         # SpinngingUp logging & Tensorboard
         self.logger = EpochLogger(**logger_kwargs)
         self.logger.save_config(locals())
@@ -120,10 +124,6 @@ class SAC:
         self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
         self.alpha = self.log_alpha.exp()
         self.alpha_optimizer = Adam([self.log_alpha], lr=self.lr)
-
-        # Set up optimizers for policy and q-function
-        self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.lr)
-        self.q_optimizer = Adam(self.q_params, lr=self.lr)
 
         self.update_counter = 0
 
