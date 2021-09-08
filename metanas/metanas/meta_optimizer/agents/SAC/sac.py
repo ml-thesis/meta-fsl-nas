@@ -143,9 +143,6 @@ class SAC:
         q1 = self.ac.q1(o)
         q2 = self.ac.q2(o)
 
-        # print(q1.shape, a)
-        # print(a.shape)
-
         with torch.no_grad():
             # Target actions come from *current* policy
             _, a2, logp_a2 = self.ac.pi.sample(o2)
@@ -157,15 +154,10 @@ class SAC:
             # Next Q-value
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
-            # print((a2 * (q_pi_targ - self.alpha * logp_a2)).shape)
             next_q = (a2 * (q_pi_targ - self.alpha * logp_a2)
                       ).sum(-1).unsqueeze(-1)
-            # print("next_q", next_q)
 
             backup = r + self.gamma * (1 - d) * next_q
-
-        # print((a2 * (q_pi_targ - self.alpha * logp_a2)).shape)
-        # print(backup.shape)
 
         # MSE loss against Bellman backup
         loss_q1 = ((q1.gather(1, a.long()) - backup).pow(2)).mean()
