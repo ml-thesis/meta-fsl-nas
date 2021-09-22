@@ -9,17 +9,18 @@ import torch
 import torch.nn.functional as F
 
 from metanas.meta_optimizer.reptile import NAS_Reptile
-from metanas.meta_optimizer.agents.Random.random import RandomAgent
-from metanas.meta_optimizer.agents.SAC.rl2_sac import RL2_SAC
 from metanas.models.search_cnn import SearchCNNController
 from metanas.models.augment_cnn import AugmentCNN
 from metanas.models.maml_model import MamlModel
 from metanas.task_optimizer.darts import Darts
-from metanas.env.core import NasEnv
-
-from metanas.utils.cosine_power_annealing import cosine_power_annealing
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
+
+from metanas.nas_bench.evaluate_metanas import nasbench_meta_architecture_search
+from metanas.utils.cosine_power_annealing import cosine_power_annealing
+from metanas.meta_optimizer.agents.Random.random import RandomAgent
+from metanas.meta_optimizer.agents.SAC.rl2_sac import SAC
+from metanas.env.core import NasEnv
 
 
 """ Script for metanas & baseline trainings
@@ -1079,6 +1080,8 @@ if __name__ == "__main__":
         "during final evaluation.",
     )  # deprecated
 
+    parser.add_argument("--run_on_nas_bench", action="store_true")
+
     args = parser.parse_args()
     args.path = os.path.join(
         args.path, ""
@@ -1094,4 +1097,5 @@ if __name__ == "__main__":
     logger = utils.get_logger(os.path.join(args.path, f"{args.name}.log"))
     args.logger = logger
 
+    # TODO:Seperate the training on NAS_bench
     meta_architecture_search(args)
