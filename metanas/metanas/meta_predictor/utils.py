@@ -3,7 +3,6 @@
 # Rapid Neural Architecture Search by Learning to Generate Graphs from Datasets, ICLR 2021
 ###########################################################################################
 import os
-import time
 import igraph
 import numpy as np
 import scipy.stats
@@ -29,6 +28,24 @@ def load_graph_config(graph_data_name, nvt, data_path):
     graph_config['END_TYPE'] = 1  # predefined end vertex type
 
     return graph_config
+
+
+def load_pretrained_model(model_path, model):
+    model_path, name = os.path.split(model_path)
+    assert name, "Specify the full path for argument 'model_path'."
+    print(f"Loading pretrained model from {model_path}")
+
+    state = torch.load(model_path)
+    model.load_state_dict(state)
+
+
+def save_model(model_path, model, epoch, max_corr=None):
+    if max_corr is not None:
+        torch.save(model.cpu().state_dict(),
+                   os.path.join(model_path, 'predictor_max_corr.pt'))
+    else:
+        torch.save(model.cpu().state_dict(),
+                   os.path.join(model_path, f'predictor_{epoch}.pt'))
 
 
 def decode_NAS_BENCH_201_8_to_igraph(row):
@@ -92,176 +109,6 @@ def is_valid_DAG(g, START_TYPE=0, END_TYPE=1):
         if v.outdegree() == 0 and v['type'] != END_TYPE:
             return False
     return res and n_start == 1 and n_end == 1
-
-
-class Accumulator():
-    def __init__(self, *args):
-        self.args = args
-        self.argdict = {}
-        for i, arg in enumerate(args):
-            self.argdict[arg] = i
-        self.sums = [0] * len(args)
-        self.cnt = 0
-
-    def accum(self, val):
-        val = [val] if type(val) is not list else val
-        val = [v for v in val if v is not None]
-        assert (len(val) == len(self.args))
-        for i in range(len(val)):
-            if torch.is_tensor(val[i]):
-                val[i] = val[i].item()
-            self.sums[i] += val[i]
-        self.cnt += 1
-
-    def clear(self):
-        self.sums = [0] * len(self.args)
-        self.cnt = 0
-
-    def get(self, arg, avg=True):
-        i = self.argdict.get(arg, -1)
-        assert (i is not -1)
-        if avg:
-            return self.sums[i] / (self.cnt + 1e-8)
-        else:
-            return self.sums[i]
-
-    def print_(self, header=None, time=None,
-               logfile=None, do_not_print=[], as_int=[],
-               avg=True):
-        msg = '' if header is None else header + ': '
-        if time is not None:
-            msg += ('(%.3f secs), ' % time)
-
-        args = [arg for arg in self.args if arg not in do_not_print]
-        arg = []
-        for arg in args:
-            val = self.sums[self.argdict[arg]]
-            if avg:
-                val /= (self.cnt + 1e-8)
-            if arg in as_int:
-                msg += ('%s %d, ' % (arg, int(val)))
-            else:
-                msg += ('%s %.4f, ' % (arg, val))
-        print(msg)
-
-        if logfile is not None:
-            logfile.write(msg + '\n')
-            logfile.flush()
-
-    def add_scalars(self, summary, header=None, tag_scalar=None,
-                    step=None, avg=True, args=None):
-        for arg in self.args:
-            val = self.sums[self.argdict[arg]]
-            if avg:
-                val /= (self.cnt + 1e-8)
-            else:
-                val = val
-            tag = f'{header}/{arg}' if header is not None else arg
-            if tag_scalar is not None:
-                summary.add_scalars(main_tag=tag,
-                                    tag_scalar_dict={tag_scalar: val},
-                                    global_step=step)
-            else:
-                summary.add_scalar(tag=tag,
-                                   scalar_value=val,
-                                   global_step=step)
-
-
-class Log:
-    def __init__(self, args, logf, summary=None):
-        self.args = args
-        self.logf = logf
-        self.summary = summary
-        self.stime = time.time()
-        self.ep_sttime = None
-
-    def print(self, logger, epoch, tag=None, avg=True):
-        if tag == 'train':
-            ct = time.time() - self.ep_sttime
-            tt = time.time() - self.stime
-            msg = f'[total {tt:6.2f}s (ep {ct:6.2f}s)] epoch {epoch:3d}'
-            print(msg)
-            self.logf.write(msg+'\n')
-        logger.print_(header=tag, logfile=self.logf, avg=avg)
-
-        if self.summary is not None:
-            logger.add_scalars(
-                self.summary, header=tag, step=epoch, avg=avg)
-        logger.clear()
-
-    def print_args(self):
-        argdict = vars(self.args)
-        print(argdict)
-        for k, v in argdict.items():
-            self.logf.write(k + ': ' + str(v) + '\n')
-        self.logf.write('\n')
-
-    def set_time(self):
-        self.stime = time.time()
-
-    def save_time_log(self):
-        ct = time.time() - self.stime
-        msg = f'({ct:6.2f}s) meta-training phase done'
-        print(msg)
-        self.logf.write(msg+'\n')
-
-    def print_pred_log(self, loss, corr, tag, epoch=None, max_corr_dict=None):
-        if tag == 'train':
-            ct = time.time() - self.ep_sttime
-            tt = time.time() - self.stime
-            msg = f'[total {tt:6.2f}s (ep {ct:6.2f}s)] epoch {epoch:3d}'
-            self.logf.write(msg+'\n')
-            print(msg)
-            self.logf.flush()
-        #msg = f'ep {epoch:3d} ep time {time.time() - ep_sttime:8.2f} '
-        #msg += f'time {time.time() - sttime:6.2f} '
-        if max_corr_dict is not None:
-            max_corr = max_corr_dict['corr']
-            max_loss = max_corr_dict['loss']
-            msg = f'{tag}: loss {loss:.6f} ({max_loss:.6f}) '
-            msg += f'corr {corr:.4f} ({max_corr:.4f})'
-        else:
-            msg = f'{tag}: loss {loss:.6f} corr {corr:.4f}'
-        self.logf.write(msg+'\n')
-        print(msg)
-        self.logf.flush()
-
-    def max_corr_log(self, max_corr_dict):
-        corr = max_corr_dict['corr']
-        loss = max_corr_dict['loss']
-        epoch = max_corr_dict['epoch']
-        msg = f'[epoch {epoch}] max correlation: {corr:.4f}, loss: {loss:.6f}'
-        self.logf.write(msg+'\n')
-        print(msg)
-        self.logf.flush()
-
-
-def get_log(epoch, loss, y_pred, y, acc_std, acc_mean, tag='train'):
-    msg = f'[{tag}] Ep {epoch} loss {loss.item()/len(y):0.4f} '
-    msg += f'pacc {y_pred[0]:0.4f}'
-    msg += f'({y_pred[0]*100.0*acc_std+acc_mean:0.4f}) '
-    msg += f'acc {y[0]:0.4f}({y[0]*100*acc_std+acc_mean:0.4f})'
-    return msg
-
-
-def load_model(model, model_path, load_epoch=None, load_max_pt=None):
-    if load_max_pt is not None:
-        ckpt_path = os.path.join(model_path, load_max_pt)
-    else:
-        ckpt_path = os.path.join(model_path, f'ckpt_{load_epoch}.pt')
-    print(f"==> load model from {ckpt_path} ...")
-    model.cpu()
-    model.load_state_dict(torch.load(ckpt_path))
-
-
-def save_model(epoch, model, model_path, max_corr=None):
-    print("==> save current model...")
-    if max_corr is not None:
-        torch.save(model.cpu().state_dict(),
-                   os.path.join(model_path, 'ckpt_max_corr.pt'))
-    else:
-        torch.save(model.cpu().state_dict(),
-                   os.path.join(model_path, f'ckpt_{epoch}.pt'))
 
 
 def mean_confidence_interval(data, confidence=0.95):
