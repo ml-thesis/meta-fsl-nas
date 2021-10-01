@@ -621,13 +621,6 @@ class SearchCNNController(nn.Module):
                 self.alpha_reduce, weights_pw_reduce, primitives=self.primitives
             )
 
-            # Limiting the skip connections, only applies to the normal cell.
-            # if limit_skip_connections is not None:
-            #     gene_normal = gt.limit_skip_connections_pw(
-            #         self.alpha_normal, weights_pw_normal,
-            #         primitives=self.primitives,
-            #         num_of_skip_connections=limit_skip_connections)
-
         elif self.use_hierarchical_alphas:
             raise NotImplementedError
         else:
@@ -635,13 +628,6 @@ class SearchCNNController(nn.Module):
                 self.alpha_normal, k=2, primitives=self.primitives)
             gene_reduce = gt.parse(
                 self.alpha_reduce, k=2, primitives=self.primitives)
-
-            # Limiting the skip connections, only applies to the normal cell.
-            # if limit_skip_connections is not None:
-            #     gene_normal = gt.limit_skip_connections(
-            #         self.alpha_normal,
-            #         self.primitives, k=2,
-            #         num_of_skip_connections=limit_skip_connections)
 
         concat = range(2, 2 + self.n_nodes)  # concat all intermediate nodes
 
@@ -770,7 +756,7 @@ class SearchCNN(nn.Module):
             x: The network input
             weights_normal: The alphas over operations for normal
                 cells
-            weights_reduce:The alphas over operations for reduction
+            weights_reduce: The alphas over operations for reduction
                 cells
             weights_in_normal: The alphas over inputs for normal cells
                 (hierarchical alphas)

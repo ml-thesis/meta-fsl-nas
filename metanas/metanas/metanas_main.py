@@ -16,7 +16,6 @@ from metanas.task_optimizer.darts import Darts
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
-from metanas.nas_bench.evaluate_metanas import nasbench_meta_architecture_search
 from metanas.utils.cosine_power_annealing import cosine_power_annealing
 from metanas.meta_optimizer.agents.Random.random import RandomAgent
 from metanas.meta_optimizer.agents.SAC.rl2_sac import SAC
@@ -136,7 +135,7 @@ def meta_architecture_search(
         )
 
     config.logger.info(
-        f"alpha initial = {[alpha for alpha in meta_model.alphas()]} ")
+        f"alpha initial = {[alpha for alpha in meta_model.alphas()]}")
 
     utils.print_config_params(config, config.logger.info)
 
@@ -158,7 +157,7 @@ def meta_architecture_search(
     # meta testing
     ###########################################################################
     config.logger.info(
-        f"train steps for evaluation:{ config.test_task_train_steps} ")
+        f"train steps for evaluation:{ config.test_task_train_steps}")
 
     # run the evaluation
     # TODO: Omit this for now
@@ -432,13 +431,6 @@ def train(
     config.losses_logger = utils.AverageMeter()
     config.losses_logger_test = utils.AverageMeter()
 
-    # Reinforcement Learning environment wrapper
-    # TODO: Currently only wraps the normal cell, should be moved one
-    # scope up
-    env = NasEnv(config, meta_model, task_optimizer, test_phase=False)
-    # agent = RandomAgent(config, meta_model, env)
-    agent = RL2_SAC_agent(config, meta_model, env)
-
     # meta lr annealing
     if config.use_cosine_power_annealing:
         w_meta_lr_power_schedule = cosine_power_annealing(
@@ -457,6 +449,24 @@ def train(
         w_meta_lr_scheduler, a_meta_lr_scheduler = _get_meta_lr_scheduler(
             config, meta_optimizer
         )
+
+    # Reinforcement Learning environment wrapper
+    # TODO: Currently only wraps the normal cell, should be moved one
+    # scope up
+    env = NasEnv(config, meta_model, task_optimizer,
+                 reward_estimation=False)
+    # env_normal = NasEnv(config, meta_model, task_optimizer,
+    # reward_estimation=False)
+    print(vars(env))
+
+    if config.agent == "random":
+        agent = RandomAgent(config, meta_model, env)
+    else:
+        # TODO: Move to config
+        agent = SAC(config, meta_model, env,
+                    max_ep_len=100, steps_per_epoch=2000,
+                    update_after=1000,
+                    epochs=20, batch_size=8)
 
     for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
 
@@ -487,13 +497,16 @@ def train(
 
             # Set task of environment, as the sampling is done outside
             # of the environment wrapper
-            if meta_epoch >= config.warm_up_epochs:
-                env.set_task(task, meta_epoch)
+            # if meta_epoch >= config.warm_up_epochs:
 
-                # Now optimize the task with the agent
-                agent_infos += [
-                    agent.act_on_env(env)
-                ]
+            # A single trail consists of multiple episodes
+            env.set_task(task)
+
+            # Now optimize the task with the agent
+            agent_infos += [
+                agent.act_on_env(env)
+            ]
+            meta_model.load_state_dict(meta_state)
 
             task_infos += [
                 task_optimizer.step(
@@ -502,6 +515,8 @@ def train(
                 )
             ]
 
+            # Reset hidden weights
+            # agent
             meta_model.load_state_dict(meta_state)
 
         time_be = time.time()
@@ -539,8 +554,6 @@ def train(
 
         # meta testing every config.eval_freq epochs
         # meta test eval + backup
-        # TODO: currently dont enter this loop
-        # a = False
         if meta_epoch % config.eval_freq == 0:
             meta_test_batch = task_distribution.sample_meta_test()
 
@@ -782,9 +795,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dataset", default="omniglot",
                         help="omniglot / miniimagenet")
-
-    parser.add_argument("--agent", default="random",
-                        help="random / sac")
 
     parser.add_argument(
         "--use_vinyals_split",
@@ -1080,7 +1090,16 @@ if __name__ == "__main__":
         "during final evaluation.",
     )  # deprecated
 
-    parser.add_argument("--run_on_nas_bench", action="store_true")
+    # Meta-predictor variables
+    # model_name, save_path, save_epoch, max_epoch, batch_size, graph_data_name
+    # nvt, num_samples, hs, nz, test, load_epoch, data_name, num_class
+    # num_gen_arch, train_arch, model_path (with adjustments)
+    # parser.add_argument(
+
+    # )
+
+    parser.add_argument("--agent", default="random",
+                        help="random / sac")
 
     args = parser.parse_args()
     args.path = os.path.join(
@@ -1097,5 +1116,4 @@ if __name__ == "__main__":
     logger = utils.get_logger(os.path.join(args.path, f"{args.name}.log"))
     args.logger = logger
 
-    # TODO:Seperate the training on NAS_bench
     meta_architecture_search(args)

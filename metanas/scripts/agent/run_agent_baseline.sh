@@ -33,6 +33,7 @@ do
 
         --meta_model_prune_threshold 0.01 \
         --alpha_prune_threshold 0.01 \
+
         # Meta Learning
         --meta_model searchcnn \
         --meta_epochs $EPOCHS \
@@ -57,11 +58,14 @@ do
         --use_first_order_darts \
         --use_torchmeta_loader \
 
-        # Custom adjustment
+        # Custom DARTS adjustments
         --dropout_skip_connections \
 
         # Default M=2,
         --use_limit_skip_connection \
+
+        # RL agent
+        --agent sac 
     )
 
     python -u -m metanas.metanas_main "${args[@]}"
