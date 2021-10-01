@@ -6,8 +6,9 @@ import time
 import gym
 from gym import spaces
 
-import metanas.utils.genotypes as gt
 from metanas.utils import utils
+import metanas.utils.genotypes as gt
+
 
 """Wrapper for the RL agent to interact with the meta-model in the outer-loop
 utilizing the OpenAI gym interface
@@ -17,20 +18,21 @@ utilizing the OpenAI gym interface
 class NasEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, config, meta_model, task_optimizer,
+    def __init__(self, config, meta_model, task_optimizer=None,
                  test_phase=False, cell_type="normal",
-                 reward_estimation=True,
-                 max_steps=100):
+                 reward_estimation=False,
+                 max_steps=100, test_env=None):
         super().__init__()
         self.config = config
+        self.test_env = test_env
         self.cell_type = cell_type
         self.primitives = config.primitives
         self.reward_estimation = reward_estimation
 
         self.test_phase = test_phase
         self.meta_model = meta_model
-        self.task_optimizer = task_optimizer
-        self.meta_predictor
+        # self.task_optimizer = task_optimizer
+        # self.meta_predictor
         self.meta_epoch = 0
 
         # The task is set in the meta-loop
@@ -45,11 +47,11 @@ class NasEnv(gym.Env):
         # TODO: Set seed?
 
         # Set baseline accuracy to scale the reward
-        self.baseline_acc = self.compute_reward()
+        self.baseline_acc = 0
 
         # Initialize State/Observation space
         # Intermediate + input nodes
-        self.n_nodes = self.config + 2
+        self.n_nodes = self.config.nodes + 2
 
         # Adjacency matrix
         self.A = np.ones((self.n_nodes, self.n_nodes)) - np.eye(self.n_nodes)
@@ -67,6 +69,9 @@ class NasEnv(gym.Env):
 
     def reset(self):
         """Reset the environment state"""
+        assert self.current_task is not None, \
+            "A task needs to be set before evaluation"
+
         # Initialize the step counters
         self.step_count = 0
         self.terminate_episode = False
@@ -81,11 +86,9 @@ class NasEnv(gym.Env):
 
         return self.current_state
 
-    def set_task(self, task, meta_epoch):
+    def set_task(self, task):
         """The meta-loop passes the task for the environment to solve"""
         self.current_task = task
-        self.meta_epoch = meta_epoch
-
         self.reset()
 
     def initialize_observation_space(self):
@@ -110,6 +113,7 @@ class NasEnv(gym.Env):
         s_idx = 0
         self.states = []
         self.edge_to_index = {}
+        self.edge_to_alpha = {}
 
         # Define (normalized) alphas
         if self.cell_type == "normal":
@@ -143,7 +147,12 @@ class NasEnv(gym.Env):
 
             for j, edge in enumerate(edges):
                 self.edge_to_index[(j, i+2)] = s_idx
+                self.edge_to_index[(i+2, j)] = s_idx+1
 
+                self.edge_to_alpha[(j, i+2)] = (i, j)
+                self.edge_to_alpha[(i+2, j)] = (i, j)
+
+                # For undirected edge we add the edge twice
                 self.states.append(
                     np.concatenate((
                         [j],
@@ -151,7 +160,15 @@ class NasEnv(gym.Env):
                         [int(j in topk_edge_indices)],
                         self.A[i+2],
                         edge.detach().numpy())))
-                s_idx += 1
+
+                self.states.append(
+                    np.concatenate((
+                        [i+2],
+                        [j],
+                        [int(j in topk_edge_indices)],
+                        self.A[j],
+                        edge.detach().numpy())))
+                s_idx += 2
 
         self.states = np.array(self.states)
 
@@ -172,12 +189,12 @@ class NasEnv(gym.Env):
         if self.cell_type == "normal":
             with torch.no_grad():
                 self.meta_model.alpha_normal[
-                    row_idx, edge_idx][op_idx] += value
+                    row_idx][edge_idx][op_idx] += value
 
         elif self.cell_type == "reduce":
             with torch.no_grad():
                 self.meta_model.alpha_reduce[
-                    row_idx, edge_idx][op_idx] += value
+                    row_idx][edge_idx][op_idx] += value
 
         else:
             raise RuntimeError(f"Cell type {self.cell_type} is not supported.")
@@ -223,11 +240,12 @@ class NasEnv(gym.Env):
         action_info = ""
         reward = 0
 
+        # denotes the current edge it is on
+        cur_node = int(self.current_state[0])
+        next_node = int(self.current_state[1])
+
         # Adjacancy matrix A, navigating to the next node
         if action in np.arange(len(self.A)):
-            # denotes the current edge it is on
-            cur_node = self.current_state[0]
-            next_node = self.current_state[1]
 
             # Determine if agent is allowed to traverse
             # the edge
@@ -255,13 +273,11 @@ class NasEnv(gym.Env):
             action = action - len(self.A)
 
             # Find the current edge to mutate
-            cur_node, next_node = self.current_state[0], self.current_state[1]
+            row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
-            # Indices for alphas
-            edge_idx, row_idx = gt.find_indice(s_idx, self.config.nodes)
             increase_val = torch.sum(
-                torch.abs(self.alphas[row_idx, edge_idx]))
+                torch.abs(self.alphas[row_idx][edge_idx]))
 
             self.update_meta_model(increase_val,
                                    row_idx,
@@ -287,13 +303,11 @@ class NasEnv(gym.Env):
             action = action - len(self.A) - len(self.primitives)
 
             # Find the current edge to mutate
-            cur_node, next_node = self.current_state[0], self.current_state[1]
+            row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
-            # Indices for alphas
-            edge_idx, row_idx = gt.find_indice(s_idx, self.config.nodes)
             decrease_val = -torch.sum(
-                torch.abs(self.alphas[row_idx, edge_idx]))
+                torch.abs(self.alphas[row_idx][edge_idx]))
 
             self.update_meta_model(decrease_val,
                                    row_idx,
@@ -310,7 +324,7 @@ class NasEnv(gym.Env):
             reward = self.compute_reward()
 
             loc = f"({row_idx}, {edge_idx}, {action})"
-            action_info = f"Decrease alpha {loc} by {increase_val}"
+            action_info = f"Decrease alpha {loc} by {decrease_val}"
 
         # Terminate the episode
         if action in np.arange(len(self.A)+2*len(self.primitives),
@@ -324,6 +338,10 @@ class NasEnv(gym.Env):
     # Calculation/Estimations of the reward
 
     def compute_reward(self):
+        # For testing env
+        if self.test_env is not None:
+            return np.random.uniform(low=-1, high=1, size=(1,))[0]
+
         if self.reward_estimation:
             acc = self._meta_predictor_estimation(self.current_task)
         else:
@@ -366,7 +384,7 @@ class NasEnv(gym.Env):
     def _darts_estimation(self, task):
         # TODO: Appropriate refactor of the accuracy calculation,
         # Only estimating on the training set, no training (yet).
-        self.meta_model.model.eval()
+        self.meta_model.eval()
 
         train_acc = []
 
