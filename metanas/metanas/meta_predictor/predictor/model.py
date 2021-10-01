@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from set_encoder import SetPool
+from metanas.meta_predictor.predictor.set_encoder import SetPool
 
 
 class PredictorModel(nn.Module):
