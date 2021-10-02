@@ -16,6 +16,7 @@ from metanas.task_optimizer.darts import Darts
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
+from metanas.meta_optimizer.agents.utils.run_utils import setup_logger_kwargs
 from metanas.utils.cosine_power_annealing import cosine_power_annealing
 from metanas.meta_optimizer.agents.Random.random import RandomAgent
 from metanas.meta_optimizer.agents.SAC.rl2_sac import SAC
@@ -457,13 +458,16 @@ def train(
                  reward_estimation=False)
     # env_normal = NasEnv(config, meta_model, task_optimizer,
     # reward_estimation=False)
-    print(vars(env))
 
     if config.agent == "random":
         agent = RandomAgent(config, meta_model, env)
     else:
         # TODO: Move to config
-        agent = SAC(config, meta_model, env,
+        logger_kwargs = setup_logger_kwargs(config.path, seed=args.seed)
+        ac_kwargs = dict(hidden_size=[256]*2)
+
+        agent = SAC(env, env, ac_kwargs=ac_kwargs,
+                    logger_kwargs=logger_kwargs,
                     max_ep_len=100, steps_per_epoch=2000,
                     update_after=1000,
                     epochs=20, batch_size=8)
@@ -498,13 +502,11 @@ def train(
             # Set task of environment, as the sampling is done outside
             # of the environment wrapper
             # if meta_epoch >= config.warm_up_epochs:
-
-            # A single trail consists of multiple episodes
             env.set_task(task)
 
             # Now optimize the task with the agent
             agent_infos += [
-                agent.act_on_env(env)
+                agent.train_agent()
             ]
             meta_model.load_state_dict(meta_state)
 

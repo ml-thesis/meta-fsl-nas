@@ -100,7 +100,7 @@ class NasEnv(gym.Env):
 
         self.observation_space = spaces.Box(
             0, 1,
-            shape=self.current_state[0].shape,
+            shape=self.current_state.shape,
             dtype=np.int32)
 
     def update_states(self):

@@ -16,6 +16,8 @@ import time
 import atexit
 import os
 import warnings
+
+from metanas.env.core import NasEnv
 from metanas.meta_optimizer.agents.utils.mpi_tools import proc_id, mpi_statistics_scalar
 from metanas.meta_optimizer.agents.utils.serialization_utils import convert_json
 
@@ -61,7 +63,7 @@ def restore_tf_graph(sess, fpath):
 
     Returns:
         A dictionary mapping from keys to tensors in the computation graph
-        loaded from ``fpath``. 
+        loaded from ``fpath``.
     """
     tf.saved_model.loader.load(
         sess,
@@ -163,6 +165,9 @@ class Logger:
             logger = EpochLogger(**logger_kwargs)
             logger.save_config(locals())
         """
+        # Can't serialize the NAS env
+        if isinstance(config['env'], NasEnv):
+            return
         config_json = convert_json(config)
         if self.exp_name is not None:
             config_json['exp_name'] = self.exp_name
