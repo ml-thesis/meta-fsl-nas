@@ -8,6 +8,8 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from metanas.meta_optimizer.agents.utils.logx import EpochLogger
 
+# TODO: Refactor after having a working version on metaNAS
+
 
 class NAS_agent(ABC):
     def __init__(self, config, meta_model, env):
