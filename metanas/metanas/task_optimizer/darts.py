@@ -325,16 +325,10 @@ def train(
         w_optim.zero_grad()
         logits = model(train_X)
 
-        # prec1, prec5 = utils.accuracy(logits, train_y, topk=(1, 5))
-        # train_acc.append(prec1.item())
-
         loss = model.criterion(logits, train_y)
         loss.backward()
         nn.utils.clip_grad_norm_(model.weights(), config.w_grad_clip)
         w_optim.step()
-
-    # Use loss or accuracy as reward signal
-    # return sum(train_acc) / len(train_acc)
 
 
 class Architect:
