@@ -66,11 +66,22 @@ class GRUCategoricalPolicy(nn.Module):
 
     def sample(self, obs, prev_act, prev_rew, hid):
 
+        # print("obs", obs)
         action_logits, hidden_out = self.forward(
             obs, prev_act, prev_rew, hid)
 
+        if torch.any(torch.isnan(obs)):
+            print("obs:", obs)
+        # print(action_logits)
         action_probs = F.softmax(action_logits, dim=-1)
+
+        if torch.any(torch.isnan(action_probs)):
+            print("action_probs:", action_probs)
+        # print(action_probs)
         action_dist = Categorical(action_probs)
+
+        # if torch.any(torch.isnan(action_dist)):
+        #     print("action_dist:", action_dist)
         actions = action_dist.sample().view(-1, 1)
 
         # Avoid numerical instability

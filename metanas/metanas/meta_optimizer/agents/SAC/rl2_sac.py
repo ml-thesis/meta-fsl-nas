@@ -396,6 +396,7 @@ class SAC:
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     def train_agent(self):
+        print("start train")
         episode_record = EpisodeMemory(self.random_update)
         h = self.init_hidden_states(batch_size=1)
 

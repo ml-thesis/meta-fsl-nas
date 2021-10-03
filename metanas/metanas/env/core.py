@@ -49,6 +49,8 @@ class NasEnv(gym.Env):
         # Set baseline accuracy to scale the reward
         self.baseline_acc = 0
 
+        self.max_alpha_value = 1e5
+
         # Initialize State/Observation space
         # Intermediate + input nodes
         self.n_nodes = self.config.nodes + 2
@@ -277,11 +279,19 @@ class NasEnv(gym.Env):
             row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
+            abs_sum = torch.sum(
+                torch.abs(self.alphas[row_idx][edge_idx]))
+            current_alpha = self.alphas[row_idx][edge_idx][action]
+
             # If the current operation is already the maximum operator
             # we skip the calculation.
-            if action != torch.argmax(self.alphas[row_idx][edge_idx]):
-                increase_val = torch.sum(
-                    torch.abs(self.alphas[row_idx][edge_idx]))
+            # or if the current alpha is larger than sum of all other alphas
+            # this will spiral into NaN values,
+            if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
+                    not current_alpha > abs_sum - current_alpha:
+
+                # Make 0.1 configurable?
+                increase_val = abs_sum * 0.10
 
                 self.update_meta_model(increase_val,
                                        row_idx,
@@ -312,11 +322,17 @@ class NasEnv(gym.Env):
             row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
+            abs_sum = torch.sum(
+                torch.abs(self.alphas[row_idx][edge_idx]))
+            current_alpha = self.alphas[row_idx][edge_idx][action]
+
             # If the current operation is already the maximum operator
             # we skip the calculation.
-            if action != torch.argmax(self.alphas[row_idx][edge_idx]):
-                decrease_val = -torch.sum(
-                    torch.abs(self.alphas[row_idx][edge_idx]))
+            if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
+                    not current_alpha > abs_sum - current_alpha:
+
+                # Make 0.1 configurable?
+                decrease_val = abs_sum * 0.10
 
                 self.update_meta_model(decrease_val,
                                        row_idx,
