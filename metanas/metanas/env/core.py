@@ -69,7 +69,9 @@ class NasEnv(gym.Env):
 
     def reset(self):
         """Reset the environment state"""
-        assert self.current_task is not None, \
+        # Add clause for testing the environment in which the task
+        # is not defined.
+        assert not (self.current_task is None and self.test_env is False), \
             "A task needs to be set before evaluation"
 
         # Initialize the step counters
@@ -100,7 +102,7 @@ class NasEnv(gym.Env):
 
         self.observation_space = spaces.Box(
             0, 1,
-            shape=self.current_state[0].shape,
+            shape=self.current_state.shape,
             dtype=np.int32)
 
     def update_states(self):
@@ -225,8 +227,7 @@ class NasEnv(gym.Env):
             "action_id": action,
             "action": action_info,
             "reward": reward,
-            "done": done,
-            "running_time": running_time
+            "done": done
         }
 
         return self.current_state, reward, done, info_dict
@@ -276,25 +277,30 @@ class NasEnv(gym.Env):
             row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
-            increase_val = torch.sum(
-                torch.abs(self.alphas[row_idx][edge_idx]))
+            # If the current operation is already the maximum operator
+            # we skip the calculation.
+            if action != torch.argmax(self.alphas[row_idx][edge_idx]):
+                increase_val = torch.sum(
+                    torch.abs(self.alphas[row_idx][edge_idx]))
 
-            self.update_meta_model(increase_val,
-                                   row_idx,
-                                   edge_idx,
-                                   action)
+                self.update_meta_model(increase_val,
+                                       row_idx,
+                                       edge_idx,
+                                       action)
 
-            # Update the local state after increasing the alphas
-            self.update_states()
+                # Update the local state after increasing the alphas
+                self.update_states()
 
-            # Set current state again!
-            self.current_state = self.states[s_idx]
+                # Set current state again!
+                self.current_state = self.states[s_idx]
 
-            # Compute reward after updating
-            reward = self.compute_reward()
+                # Compute reward after updating
+                reward = self.compute_reward()
+            else:
+                increase_val = 0.0
 
             loc = f"({row_idx}, {edge_idx}, {action})"
-            action_info = f"Increase alpha {loc} by {increase_val}"
+            action_info = f"Increase alpha {loc} by {increase_val:.3f}"
 
         # Decreasing the alpha for the given operation
         if action in np.arange(len(self.A)+len(self.primitives),
@@ -306,25 +312,30 @@ class NasEnv(gym.Env):
             row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
-            decrease_val = -torch.sum(
-                torch.abs(self.alphas[row_idx][edge_idx]))
+            # If the current operation is already the maximum operator
+            # we skip the calculation.
+            if action != torch.argmax(self.alphas[row_idx][edge_idx]):
+                decrease_val = -torch.sum(
+                    torch.abs(self.alphas[row_idx][edge_idx]))
 
-            self.update_meta_model(decrease_val,
-                                   row_idx,
-                                   edge_idx,
-                                   action)
+                self.update_meta_model(decrease_val,
+                                       row_idx,
+                                       edge_idx,
+                                       action)
 
-            # Update the local state after increasing the alphas
-            self.update_states()
+                # Update the local state after increasing the alphas
+                self.update_states()
 
-            # Set current state again!
-            self.current_state = self.states[s_idx]
+                # Set current state again!
+                self.current_state = self.states[s_idx]
 
-            # Compute reward after updating
-            reward = self.compute_reward()
+                # Compute reward after updating
+                reward = self.compute_reward()
+            else:
+                decrease_val = 0.0
 
             loc = f"({row_idx}, {edge_idx}, {action})"
-            action_info = f"Decrease alpha {loc} by {decrease_val}"
+            action_info = f"Decrease alpha {loc} by {decrease_val:.3f}"
 
         # Terminate the episode
         if action in np.arange(len(self.A)+2*len(self.primitives),

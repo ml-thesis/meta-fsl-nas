@@ -55,7 +55,6 @@ class meta_predictor:
             self.num_class = config.num_class
             self.load_epoch = config.load_epoch
         else:
-            # TODO: Move lr to config
             self.optimizer = optim.Adam(self.model.parameters(), lr=1e-4)
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer, 'min',
