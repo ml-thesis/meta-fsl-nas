@@ -505,11 +505,13 @@ def train(
             env.set_task(task)
 
             # Now optimize the task with the agent
+            print("RL task start")
             agent_infos += [
                 agent.train_agent()
             ]
             meta_model.load_state_dict(meta_state)
 
+            print("Grad task start")
             task_infos += [
                 task_optimizer.step(
                     task, epoch=meta_epoch,
