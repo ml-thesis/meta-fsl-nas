@@ -1,54 +1,55 @@
-from metanas.meta_optimizer.agents.agent import NAS_agent
+import time
 
-# TODO: Refactor
+from metanas.meta_optimizer.agents.agent import NAS_agent
 
 
 class RandomAgent(NAS_agent):
-    def __init__(self, config, meta_model, env):
-        super().__init__(config, meta_model, env)
+    def __init__(self, config, env, epochs, steps_per_epoch,
+                 logger_kwargs=dict()):
+        super().__init__(config, env, epochs, steps_per_epoch,
+                         logger_kwargs)
 
-    def act_on_test_env(self, test_env):
-        _, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
+        self.meta_epoch = 0
+        self.start_time = None
 
-        while not(d or (ep_len == test_env.max_steps)):
-            a = test_env.action_space.sample()
+    def train_agent(self):
+        if self.start_time is not None:
+            self.start_time = time.time()
 
-            _, r, d, _ = test_env.step(a)
+        _, d, ep_ret, ep_len = self.env.reset(), False, 0, 0
+
+        # Epochs correspond to number of episodes in trial
+        for t in range(self.total_steps):
+            a = self.env.action_space.sample()
+            _, r, d, _ = self.env.step(a)
             ep_ret += r
             ep_len += 1
 
-        self.log_episode(ep_ret, ep_len)
-        test_env.reset()
+            if d or (ep_len == self.env.max_ep_len):
+                self.logger.store(EpRet=ep_ret, EpLen=ep_len)
+                _, ep_ret, ep_len = self.env.reset(), 0, 0
 
-        # Final darts evaluation step
-        task_info = test_env.darts_evaluation_step(
-            self.config.sparsify_input_alphas,
-            self.config.limit_skip_connections)
+            # End of epoch handling
+            if (t+1) % self.steps_per_epoch == 0:
+                epoch = (t+1) // self.steps_per_epoch
+                self.meta_epoch += 1
+                self._log_episode(t, epoch)
 
-        return task_info
+    def _log_episode(self, step, episode):
+        log_perf_board = ['EpRet', 'EpLen']
 
-    def act_on_env(self, env):
-        _, d, ep_ret, ep_len = env.reset(), False, 0, 0
+        for val in log_perf_board:
+            mean, std = self.logger.get_stats(val)
+            self.summary_writer.add_scalar(
+                'Performance/Average'+val, mean, step)
+            self.summary_writer.add_scalar(
+                'Performance/Std'+val, std, step)
 
-        while not(d or (ep_len == env.max_steps)):
-            a = env.action_space.sample()
-            _, r, d, _ = env.step(a)
-            ep_ret += r
-            ep_len += 1
-
-        self.log_episode(ep_ret, ep_len)
-
-        # Final darts evaluation step
-        task_info = env.darts_evaluation_step(
-            self.config.sparsify_input_alphas,
-            self.config.limit_skip_connections)
-
-        env.reset()
-
-        return task_info
-
-    def log_episode(self, ep_ret, ep_len, ep_loss=None):
-        self.logger.add_scalar("Return", ep_ret, self.task_iter)
-        self.logger.add_scalar("Episode Length", ep_len, self.task_iter)
-        if ep_loss is not None:
-            self.logger.add_scalar("Loss", ep_loss, self.task_iter)
+        self.logger.log_tabular('Epoch', self.meta_epoch+episode)
+        self.logger.log_tabular('EpRet', with_min_and_max=True)
+        self.logger.log_tabular('EpLen', average_only=True)
+        # self.logger.log_tabular('TestEpRet', with_min_and_max=True)
+        # self.logger.log_tabular('TestEpLen', average_only=True)
+        self.logger.log_tabular('TotalEnvInteracts', step)
+        self.logger.log_tabular('Time', time.time()-self.start_time)
+        self.logger.dump_tabular()

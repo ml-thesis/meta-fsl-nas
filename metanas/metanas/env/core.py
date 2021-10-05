@@ -18,10 +18,10 @@ utilizing the OpenAI gym interface
 class NasEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, config, meta_model, task_optimizer=None,
+    def __init__(self, config, meta_model,
                  test_phase=False, cell_type="normal",
                  reward_estimation=False,
-                 max_steps=100, test_env=None):
+                 max_ep_len=100, test_env=None):
         super().__init__()
         self.config = config
         self.test_env = test_env
@@ -31,20 +31,19 @@ class NasEnv(gym.Env):
 
         self.test_phase = test_phase
         self.meta_model = meta_model
-        # self.task_optimizer = task_optimizer
+
+        # TODO: Task reward estimator
         # self.meta_predictor
         self.meta_epoch = 0
 
         # The task is set in the meta-loop
         self.current_task = None
-        self.max_steps = max_steps
+        self.max_ep_len = max_ep_len  # max_steps
         self.reward_range = (-1, 1)
 
         # Initialize the step counter
         self.step_count = 0
         self.terminate_episode = False
-
-        # TODO: Set seed?
 
         # Set baseline accuracy to scale the reward
         self.baseline_acc = 0
@@ -221,7 +220,7 @@ class NasEnv(gym.Env):
         self.step_count += 1
 
         # Conditions to terminate the episode
-        done = self.step_count == self.max_steps or \
+        done = self.step_count == self.max_ep_len or \
             self.terminate_episode
 
         info_dict = {
