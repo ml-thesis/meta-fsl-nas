@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DATASET=$DS
-AGENT=random
+AGENT=sac
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
 
 for SEED in ${SEEDS}

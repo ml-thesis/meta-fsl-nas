@@ -5,16 +5,19 @@ from metanas.meta_optimizer.agents.agent import NAS_agent
 
 class RandomAgent(NAS_agent):
     def __init__(self, config, env, epochs, steps_per_epoch,
-                 logger_kwargs=dict()):
+                 num_test_episodes, logger_kwargs=dict()):
         super().__init__(config, env, epochs, steps_per_epoch,
-                         logger_kwargs)
+                         num_test_episodes, logger_kwargs)
 
         self.meta_epoch = 0
         self.start_time = None
 
-    def train_agent(self):
+    def train_agent(self, env):
         if self.start_time is not None:
             self.start_time = time.time()
+
+        if env is not None:
+            self.env = env
 
         _, d, ep_ret, ep_len = self.env.reset(), False, 0, 0
 

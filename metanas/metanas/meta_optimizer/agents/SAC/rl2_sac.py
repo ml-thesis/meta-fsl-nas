@@ -378,9 +378,13 @@ class SAC(RL_agent):
                 ep_len += 1
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
-    def train_agent(self):
+    def train_agent(self, env=None):
+        # Set start time for the entire process
         if self.start_time is not None:
             self.start_time = time.time()
+
+        if env is not None:
+            self.env = env
 
         episode_record = EpisodeMemory(self.random_update)
         h = self.init_hidden_states(batch_size=1)

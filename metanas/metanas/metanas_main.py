@@ -1,5 +1,4 @@
 import argparse
-from collections import OrderedDict
 import copy
 import os
 import time
@@ -7,6 +6,7 @@ import numpy as np
 import pickle
 import torch
 import torch.nn.functional as F
+from collections import OrderedDict
 
 from metanas.meta_optimizer.reptile import NAS_Reptile
 from metanas.models.search_cnn import SearchCNNController
@@ -16,7 +16,6 @@ from metanas.task_optimizer.darts import Darts
 from metanas.utils import genotypes as gt
 from metanas.utils import utils
 
-from metanas.meta_optimizer.agents.utils.run_utils import setup_logger_kwargs
 from metanas.utils.cosine_power_annealing import cosine_power_annealing
 from metanas.meta_optimizer.agents.Random.random import RandomAgent
 from metanas.meta_optimizer.agents.SAC.rl2_sac import SAC
@@ -119,8 +118,6 @@ def meta_architecture_search(
     )
     meta_model = _build_model(config, task_distribution, normalizer)
 
-    # TODO: Define RL agents as meta-optimizer
-
     # task & meta optimizer
     config, meta_optimizer = _init_meta_optimizer(
         config, meta_optimizer_cls, meta_model
@@ -128,6 +125,10 @@ def meta_architecture_search(
     config, task_optimizer = _init_task_optimizer(
         config, task_optimizer_cls, meta_model
     )
+
+    # Meta-RL agent
+    config = utils.set_rl_hyperparameters(config)
+    meta_rl_agent = _init_meta_rl_agent(config, meta_model)
 
     # load pretrained model
     if config.model_path is not None:
@@ -152,6 +153,7 @@ def meta_architecture_search(
             task_distribution,
             task_optimizer,
             meta_optimizer,
+            meta_rl_agent,
             train_info,
         )
 
@@ -181,6 +183,44 @@ def meta_architecture_search(
         config.path, prefix + "experiment.pickle"))
     pickle_to_file(config, os.path.join(config.path, prefix + "config.pickle"))
     config.logger.info("Finished meta architecture search")
+
+
+def _init_meta_rl_agent(config, meta_model):
+    # Environment to set shapes and sizes
+    env_normal = NasEnv(config, meta_model,
+                        cell_type="normal",
+                        reward_estimation=config.use_rew_estimation)
+
+    if config.agent == "random":
+        agent = RandomAgent(config,
+                            env_normal,
+                            epochs=config.agent_epochs,
+                            steps_per_epoch=config.agent_steps_per_epoch,
+                            num_test_episodes=config.num_test_episodes,
+                            logger_kwargs=config.logger_kwargs)
+    else:
+        ac_kwargs = dict(hidden_size=[config.agent_hidden_size]*2)
+
+        # env passed to set shapes of the network
+        agent = SAC(config, env_normal, ac_kwargs=ac_kwargs,
+                    gamma=config.gamma,
+                    polyak=config.polyak,
+                    lr=config.agent_lr,
+                    hidden_size=config.agent_hidden_size,
+                    logger_kwargs=config.logger_kwargs,
+                    epochs=config.agent_epochs,
+                    steps_per_epoch=config.agent_steps_per_epoch,
+                    start_steps=config.agent_start_steps,
+                    update_after=config.agent_update_after,
+                    update_every=config.agent_update_every,
+                    batch_size=config.agent_batch_size,
+                    replay_size=config.replay_size,
+                    seed=config.seed,
+                    save_freq=config.save_freq,
+                    num_test_episodes=config.num_test_episodes
+                    )
+
+    return agent
 
 
 def _init_alpha_normalizer(name, task_train_steps, t_max, t_min,
@@ -387,6 +427,7 @@ def train(
     task_distribution,
     task_optimizer,
     meta_optimizer,
+    meta_rl_agent,
     train_info=None
 ):
     """Meta-training loop
@@ -398,6 +439,7 @@ def train(
         task_optimizer: A pytorch optimizer for task training
         meta_optimizer: A pytorch optimizer for meta training
         normalizer: To be able to reinit the task optimizer for staging
+        meta_rl_agent: A Meta-RL agent for meta training
         train_info: Dictionary that is added to the experiment.pickle
             file in addition to training internal data.
 
@@ -451,26 +493,13 @@ def train(
             config, meta_optimizer
         )
 
-    # Reinforcement Learning environment wrapper
-    # TODO: Currently only wraps the normal cell, should be moved one
-    # scope up
-    env = NasEnv(config, meta_model, task_optimizer,
-                 reward_estimation=False)
-    # env_normal = NasEnv(config, meta_model, task_optimizer,
-    # reward_estimation=False)
-
-    if config.agent == "random":
-        agent = RandomAgent(config, meta_model, env)
-    else:
-        # TODO: Move to config
-        logger_kwargs = setup_logger_kwargs(config.path, seed=args.seed)
-        ac_kwargs = dict(hidden_size=[256]*2)
-
-        agent = SAC(env, env, ac_kwargs=ac_kwargs,
-                    logger_kwargs=logger_kwargs,
-                    max_ep_len=100, steps_per_epoch=2000,
-                    update_after=1000,
-                    epochs=20, batch_size=8)
+    # Environment to learn reduction and normal cell
+    env_normal = NasEnv(config, meta_model,
+                        cell_type="normal",
+                        reward_estimation=config.use_rew_estimation)
+    env_reduce = NasEnv(config, meta_model,
+                        cell_type="reduce",
+                        reward_estimation=config.use_rew_estimation)
 
     for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
 
@@ -493,34 +522,27 @@ def train(
         global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
 
         task_infos = []
-        agent_infos = []
-
         time_bs = time.time()
         for task in meta_train_batch:
-            # First improve initialisation of DARTS
 
-            # Set task of environment, as the sampling is done outside
-            # of the environment wrapper
-            # if meta_epoch >= config.warm_up_epochs:
-            env.set_task(task)
+            # Set few-shot task
+            env_normal.set_task(task)
+            env_reduce.set_task(task)
 
-            # Now optimize the task with the agent
-            print("RL task start")
-            agent_infos += [
-                agent.train_agent()
-            ]
-            meta_model.load_state_dict(meta_state)
+            # Now optimize alphas for better initialization
+            meta_rl_agent.train_agent(env_normal)
+            meta_rl_agent.train_agent(env_reduce)
 
-            print("Grad task start")
+            # In warm-up don't change the alphas
+            if meta_epoch >= config.warm_up_epochs:
+                meta_model.load_state_dict(meta_state)
+
             task_infos += [
                 task_optimizer.step(
                     task, epoch=meta_epoch,
                     global_progress=global_progress
                 )
             ]
-
-            # Reset hidden weights
-            # agent
             meta_model.load_state_dict(meta_state)
 
         time_be = time.time()
@@ -530,7 +552,6 @@ def train(
         train_test_loss.append(config.losses_logger.avg)
         train_test_accu.append(config.top1_logger.avg)
 
-        # TODO: Dont apply Reptile?
         # do a meta update
         meta_optimizer.step(task_infos)
 
@@ -574,7 +595,6 @@ def train(
 
             global_progress = f"[Meta-Epoch {meta_epoch:2d}/{config.meta_epochs}]"
 
-            # TODO: Interact with environment instead
             task_infos = []
             for task in meta_test_batch:
                 task_infos += [
@@ -1102,8 +1122,30 @@ if __name__ == "__main__":
 
     # )
 
+    # Meta-RL agent settings
     parser.add_argument("--agent", default="random",
                         help="random / sac")
+
+    parser.add_argument(
+        "--use_rew_estimation",
+        action="store_true",
+        help="Use meta_predictor for the env reward estimation")
+
+    parser.add_argument("--agent_hidden_size",
+                        type=int,
+                        default=None)
+
+    parser.add_argument("--agent_epochs",
+                        type=int,
+                        default=None)
+
+    parser.add_argument("--agent_update_after",
+                        type=int,
+                        default=1000)
+
+    parser.add_argument("--agent_update_every",
+                        type=int,
+                        default=1000)
 
     args = parser.parse_args()
     args.path = os.path.join(
