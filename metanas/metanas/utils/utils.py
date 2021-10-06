@@ -168,7 +168,7 @@ def set_rl_hyperparameters(config):
         config.agent_lr = 3e-4
         config.agent_batch_size = 8
         config.agent_update_every = 20
-        config.agent_start_steps = 10000
+        config.agent_start_steps = 1000
 
         config.save_freq = 1
         config.replay_size = int(1e6)
