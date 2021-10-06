@@ -7,6 +7,8 @@ import tempfile
 import numpy as np
 import torch
 
+from metanas.meta_optimizer.agents.utils.run_utils import setup_logger_kwargs
+
 """ Utilities
 Copyright (c) 2021 Robert Bosch GmbH
 
@@ -149,6 +151,29 @@ def set_hyperparameter(config):
     # compatibility with older versions
     if not hasattr(config, "batch_size_test"):
         config.batch_size_test = config.batch_size
+    return config
+
+
+def set_rl_hyperparameters(config):
+
+    config.logger_kwargs = setup_logger_kwargs(config.path,
+                                               seed=config.seed)
+    print(config.logger_kwargs)
+    config.agent_steps_per_epoch = 2000
+    config.num_test_episodes = 10
+
+    if config.agent == "sac":
+        config.gamma = 0.99
+        config.polyak = 0.995
+        config.agent_lr = 3e-4
+        config.agent_batch_size = 8
+        config.agent_update_every = 20
+        config.agent_start_steps = 10000
+
+        config.save_freq = 1
+        config.replay_size = int(1e6)
+    elif config.agent != "random":
+        raise RuntimeError(f"No hp parameters for {config.agent} agent")
     return config
 
 

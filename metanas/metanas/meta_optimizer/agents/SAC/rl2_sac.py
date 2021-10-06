@@ -9,6 +9,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim import Adam
 
+from metanas.meta_optimizer.agents.agent import RL_agent
 from metanas.meta_optimizer.agents.utils.logx import EpochLogger
 from metanas.meta_optimizer.agents.SAC.core import GRUActorCritic, count_vars
 
@@ -143,38 +144,25 @@ class EpisodeMemory:
         return len(self.obs)
 
 
-class SAC:
-    def __init__(self, env, test_env, ac_kwargs=dict(), max_ep_len=500,
-                 steps_per_epoch=4000, epochs=100, replay_size=int(1e6),
-                 gamma=0.99, polyak=0.995, lr=1e-3, alpha=0.2, batch_size=32,
-                 start_steps=10000, update_after=1000, update_every=20,
-                 num_test_episodes=10, logger_kwargs=dict(), save_freq=1,
-                 seed=42, hidden_size=256):
+class SAC(RL_agent):
+    def __init__(self, config, env, ac_kwargs=dict(), gamma=0.99,
+                 polyak=0.995, lr=1e-3, hidden_size=256, logger_kwargs=dict(),
+                 epochs=100, steps_per_epoch=4000, start_steps=10000,
+                 update_after=1000, update_every=20, batch_size=32,
+                 replay_size=int(1e6), seed=42, save_freq=1,
+                 num_test_episodes=10
+                 ):
+        super().__init__(config, env, epochs, steps_per_epoch,
+                         num_test_episodes, logger_kwargs,
+                         seed, gamma, lr, batch_size,
+                         update_every, save_freq, hidden_size)
 
-        self.env = env
-        self.test_env = test_env
-        self.max_ep_len = max_ep_len
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.lr = lr
-        self.gamma = gamma
-        self.num_test_episodes = num_test_episodes
-        self.steps_per_epoch = steps_per_epoch
-        self.total_steps = steps_per_epoch * epochs
+        self.max_ep_len = self.env.max_ep_len
         self.update_multiplier = 20
         self.random_update = True
-
-        self.hidden_size = hidden_size
-
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
-
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+        self.update_counter = 0
 
         self.polyak = polyak
-        self.save_freq = save_freq
-        self.update_every = update_every
         self.start_steps = start_steps
         self.update_after = update_after
 
@@ -183,15 +171,8 @@ class SAC:
                                  env.action_space, **ac_kwargs).to(self.device)
         self.ac_targ = copy.deepcopy(self.ac)
 
-        # SpinngingUp logging & Tensorboard
-        self.logger = EpochLogger(**logger_kwargs)
-        self.logger.save_config(locals())
-
         # Set up model saving
         self.logger.setup_pytorch_saver(self.ac)
-
-        self.summary_writer = SummaryWriter(
-            log_dir=logger_kwargs['output_dir'], flush_secs=1)
 
         # Freeze target networks with respect to optimizers
         # (only update via polyak averaging)
@@ -209,7 +190,7 @@ class SAC:
         self.episode_buffer = EpisodicReplayBuffer(
             random_update=True,
             replay_size=replay_size,
-            max_ep_len=max_ep_len,
+            max_ep_len=self.max_ep_len,
             batch_size=batch_size,
             device=self.device,
             time_step=20
@@ -225,7 +206,9 @@ class SAC:
         self.pi_optimizer = Adam(self.ac.pi.parameters(), lr=self.lr)
         self.q_optimizer = Adam(self.q_params, lr=self.lr)
 
-        self.update_counter = 0
+        # Logging for meta-training
+        self.meta_epoch = 0
+        self.start_time = None
 
         # Count variables
         var_counts = tuple(count_vars(module)
@@ -395,8 +378,14 @@ class SAC:
                 ep_len += 1
             self.logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
-    def train_agent(self):
-        print("start train")
+    def train_agent(self, env=None):
+        # Set start time for the entire process
+        if self.start_time is not None:
+            self.start_time = time.time()
+
+        if env is not None:
+            self.env = env
+
         episode_record = EpisodeMemory(self.random_update)
         h = self.init_hidden_states(batch_size=1)
 
@@ -441,7 +430,7 @@ class SAC:
                 self.logger.store(EpRet=ep_ret, EpLen=ep_len)
                 o, ep_ret, ep_len = self.env.reset(), 0, 0
 
-                h = self.init_hidden_states(batch_size=1)
+                # h = self.init_hidden_states(batch_size=1)
 
             # Update handling
             if t >= self.update_after and t % self.update_every == 0:
@@ -451,6 +440,7 @@ class SAC:
             # End of epoch handling
             if (t+1) % self.steps_per_epoch == 0:
                 epoch = (t+1) // self.steps_per_epoch
+                self.meta_epoch += 1
 
                 # Save model
                 if (epoch % self.save_freq == 0) or (epoch == self.epochs):
@@ -458,10 +448,9 @@ class SAC:
 
                 # Test the performance of the deterministic version of the
                 # agent.
-                self.test_agent()
+                # self.test_agent()
 
                 # Log info about epoch
-
                 log_perf_board = ['EpRet', 'EpLen', 'TestEpRet',
                                   'TestEpLen', 'Q2Vals',
                                   'Q1Vals', 'LogPi']
@@ -483,12 +472,11 @@ class SAC:
                             self.summary_writer.add_scalar(
                                 key+'/'+val, mean, t)
 
-                epoch = (t+1) // self.steps_per_epoch
-                self.logger.log_tabular('Epoch', epoch)
+                self.logger.log_tabular('Epoch', self.meta_epoch+epoch)
                 self.logger.log_tabular('EpRet', with_min_and_max=True)
                 self.logger.log_tabular('EpLen', average_only=True)
-                self.logger.log_tabular('TestEpRet', with_min_and_max=True)
-                self.logger.log_tabular('TestEpLen', average_only=True)
+                # self.logger.log_tabular('TestEpRet', with_min_and_max=True)
+                # self.logger.log_tabular('TestEpLen', average_only=True)
                 self.logger.log_tabular('TotalEnvInteracts', t)
                 self.logger.log_tabular('Q2Vals', with_min_and_max=True)
                 self.logger.log_tabular('Q1Vals', with_min_and_max=True)
@@ -496,5 +484,5 @@ class SAC:
                 self.logger.log_tabular('LossPi', average_only=True)
                 self.logger.log_tabular('LossQ', average_only=True)
 
-                self.logger.log_tabular('Time', time.time()-start_time)
+                self.logger.log_tabular('Time', time.time()-self.start_time)
                 self.logger.dump_tabular()

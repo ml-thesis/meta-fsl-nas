@@ -1,74 +1,30 @@
 from abc import ABC
 
-import os
-import gym
-
+import numpy as np
 import torch
 
 from torch.utils.tensorboard import SummaryWriter
 from metanas.meta_optimizer.agents.utils.logx import EpochLogger
 
-# TODO: Refactor after having a working version on metaNAS
-
 
 class NAS_agent(ABC):
-    def __init__(self, config, meta_model, env):
-        self.meta_model = meta_model
-        self.config = config
-        self.env = env
+    """Force same interface for all agents for MetaNAS
+    """
 
-        # TensorBoard logger
-        # logger_path = os.path.join(config.path, config.agent)
-        # self.logger = SummaryWriter(logger_path, flush_secs=1)
-
-        # self.task_iter = 0
-
-    def act_on_test_env(self, env: gym.Env) -> dict():
-        """Agent mutates the DARTS alphas based on the given
-        environment and test task
-
-        Args:
-            env (Gym.Env): the NAS environment
-
-        Returns:
-            dict: Task and environment info
-        """
-        return
-
-    def act_on_env(self, env: gym.Env) -> dict():
-        """Agent mutates the DARTS alphas based on the given task
-        an entire episode.
-
-        Args:
-            env (Gym.Env): the NAS environment
-
-        Returns:
-            dict: Task and environment info
-        """
-        return
-
-
-class RL_agent(ABC):
-    def __init__(self, env, test_env, max_ep_len=1000, steps_per_epoch=4000,
-                 epochs=100, gamma=0.99, lr=1e-3, batch_size=100, seed=42,
+    def __init__(self, config, env, epochs, steps_per_epoch,
                  num_test_episodes=10, logger_kwargs=dict()):
+        self.config = config
 
         self.env = env
-        self.test_env = test_env
-        self.max_ep_len = max_ep_len
+        self.test_env = env  # not used
 
-        self.lr = lr
-        self.seed = seed
-        self.gamma = gamma
-
+        # Number of episodes in the trial
         self.epochs = epochs
         self.num_test_episodes = num_test_episodes
-        self.batch_size = batch_size
+
+        # TODO: Set equal to maximum episode length?
         self.steps_per_epoch = steps_per_epoch
         self.total_steps = steps_per_epoch * epochs
-
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
 
         # SpinngingUp logging & Tensorboard
         self.logger = EpochLogger(**logger_kwargs)
@@ -76,3 +32,47 @@ class RL_agent(ABC):
 
         self.summary_writer = SummaryWriter(
             log_dir=logger_kwargs['output_dir'], flush_secs=1)
+
+    def train_agent(self):
+        """Agent mutates the DARTS alphas based on the given
+        environment and task for a single trial.
+
+        Returns:
+            dict: Task and environment info
+        """
+        return
+
+
+class RL_agent(NAS_agent):
+    def __init__(self, config, env, epochs, steps_per_epoch,
+                 num_test_episodes, logger_kwargs,
+                 seed, gamma, lr, batch_size,
+                 update_every, save_freq, hidden_size):
+        super().__init__(config, env, epochs, steps_per_epoch,
+                         num_test_episodes, logger_kwargs)
+
+        self.seed = seed
+
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+        # Model parameters
+        self.lr = lr
+        self.gamma = gamma
+        self.hidden_size = hidden_size
+
+        self.save_freq = save_freq
+        self.batch_size = batch_size
+        self.update_every = update_every
+
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+
+    def train_agent(self):
+        """Agent mutates the DARTS alphas based on the given
+        environment and task for a single trial.
+
+        Returns:
+            dict: Task and environment info
+        """
+        return
