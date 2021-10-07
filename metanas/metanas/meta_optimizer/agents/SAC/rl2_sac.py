@@ -380,7 +380,7 @@ class SAC(RL_agent):
 
     def train_agent(self, env=None):
         # Set start time for the entire process
-        if self.start_time is not None:
+        if self.start_time is None:
             self.start_time = time.time()
 
         if env is not None:
@@ -404,7 +404,8 @@ class SAC(RL_agent):
             else:
                 a = self.env.action_space.sample()
 
-            o2, r, d, _ = self.env.step(a)
+            o2, r, d, info_dict = self.env.step(a)
+
             ep_ret += r
             ep_len += 1
 
@@ -451,8 +452,8 @@ class SAC(RL_agent):
                 # self.test_agent()
 
                 # Log info about epoch
-                log_perf_board = ['EpRet', 'EpLen', 'TestEpRet',
-                                  'TestEpLen', 'Q2Vals',
+                # 'TestEpRet', 'TestEpLen',
+                log_perf_board = ['EpRet', 'EpLen', 'Q2Vals',
                                   'Q1Vals', 'LogPi']
                 log_loss_board = ['LossPi', 'LossQ']
                 log_board = {'Performance': log_perf_board,

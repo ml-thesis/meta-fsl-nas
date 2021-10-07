@@ -48,8 +48,6 @@ class NasEnv(gym.Env):
         # Set baseline accuracy to scale the reward
         self.baseline_acc = 0
 
-        self.max_alpha_value = 1e5
-
         # Initialize State/Observation space
         # Intermediate + input nodes
         self.n_nodes = self.config.nodes + 2
@@ -194,10 +192,19 @@ class NasEnv(gym.Env):
                 self.meta_model.alpha_normal[
                     row_idx][edge_idx][op_idx] += value
 
+                max_alpha = torch.max(self.meta_model.alpha_normal[
+                    row_idx][edge_idx])
+                self.meta_model.alpha_normal[
+                    row_idx][edge_idx] /= max_alpha
+
         elif self.cell_type == "reduce":
             with torch.no_grad():
                 self.meta_model.alpha_reduce[
                     row_idx][edge_idx][op_idx] += value
+                max_alpha = torch.max(self.meta_model.alpha_reduce[
+                    row_idx][edge_idx])
+                self.meta_model.alpha_reduce[
+                    row_idx][edge_idx] /= max_alpha
 
         else:
             raise RuntimeError(f"Cell type {self.cell_type} is not supported.")
@@ -231,6 +238,25 @@ class NasEnv(gym.Env):
             "done": done
         }
 
+        # print("action:", a, "dict:", info_dict)
+
+        cur_node = int(self.current_state[0])
+        next_node = int(self.current_state[1])
+        row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
+
+        print(
+            f"\nstep: {self.step_count}, action: {action}, {action_info}, rew: {reward:.2f}")
+        if self.cell_type == "normal":
+            print(['%.2f' % elem for elem in list(
+                self.meta_model.alpha_normal[row_idx][edge_idx].cpu().detach().numpy())])
+        else:
+            print(['%.2f' % elem for elem in list(
+                self.meta_model.alpha_reduce[row_idx][edge_idx].cpu().detach().numpy())])
+
+        if np.any(np.isnan(np.array(self.current_state))):
+            print([alpha for alpha in self.meta_model.alpha_normal])
+            print([alpha for alpha in self.meta_model.alpha_reduce])
+
         return self.current_state, reward, done, info_dict
 
     def close(self):
@@ -259,14 +285,14 @@ class NasEnv(gym.Env):
                 s_idx = self.edge_to_index[(cur_node, next_node)]
                 self.current_state = self.states[s_idx]
 
-                action_info = f"Legal move from {next_node} to {action}"
+                action_info = f"Legal move from {cur_node} to {action}"
 
             elif self.A[next_node][action] < 1:
                 # Illegal next_node is not connected the action node
                 # return reward -1, and stay in the same edge
                 reward = -1
 
-                action_info = f"Illegal move from {next_node} to {action}"
+                action_info = f"Illegal move from {cur_node} to {action}"
 
         # Increasing the alpha for the given operation
         if action in np.arange(len(self.A),
@@ -281,6 +307,7 @@ class NasEnv(gym.Env):
             abs_sum = torch.sum(
                 torch.abs(self.alphas[row_idx][edge_idx]))
             current_alpha = self.alphas[row_idx][edge_idx][action]
+            abs_sum = abs_sum - torch.abs(current_alpha)
 
             # If the current operation is already the maximum operator
             # we skip the calculation.
@@ -324,6 +351,7 @@ class NasEnv(gym.Env):
             abs_sum = torch.sum(
                 torch.abs(self.alphas[row_idx][edge_idx]))
             current_alpha = self.alphas[row_idx][edge_idx][action]
+            abs_sum = abs_sum - torch.abs(current_alpha)
 
             # If the current operation is already the maximum operator
             # we skip the calculation.
