@@ -1,13 +1,15 @@
 
+import metanas.utils.genotypes as gt
+from metanas.models.search_cnn import SearchCNNController
+from metanas.utils.test_config import init_config
+from metanas.env.core import NasEnv
 import unittest
 
 import copy
 import numpy as np
 
-from metanas.env.core import NasEnv
-from metanas.utils.test_config import init_config
-from metanas.models.search_cnn import SearchCNNController
-import metanas.utils.genotypes as gt
+import sys
+sys.path.insert(0, "/home/rob/Git/meta-fsl-nas/metanas/metanas")
 
 
 class TestEnvironment(unittest.TestCase):
@@ -47,7 +49,7 @@ class TestEnvironment(unittest.TestCase):
 
             meta_state = copy.deepcopy(self.meta_model.state_dict())
 
-            while not(d or (ep_len == self.env.max_steps)):
+            while not(d or (ep_len == self.env.max_ep_len)):
                 a = self.env.action_space.sample()
                 o, r, d, _ = self.env.step(a)
                 ep_len += 1
@@ -72,7 +74,7 @@ class TestEnvironment(unittest.TestCase):
         for _ in range(n):
             _, d, ep_len = self.env.reset(), False, 0
 
-            while not(d or (ep_len == self.env.max_steps)):
+            while not(d or (ep_len == self.env.max_ep_len)):
                 a = self.env.action_space.sample()
                 o, r, d, _ = self.env.step(np.random.randint(7, 8, 1)[0])
                 ep_len += 1

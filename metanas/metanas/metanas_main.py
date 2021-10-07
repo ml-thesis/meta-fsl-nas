@@ -525,17 +525,18 @@ def train(
         time_bs = time.time()
         for task in meta_train_batch:
 
-            # Set few-shot task
-            env_normal.set_task(task)
-            env_reduce.set_task(task)
-
-            # Now optimize alphas for better initialization
-            meta_rl_agent.train_agent(env_normal)
-            meta_rl_agent.train_agent(env_reduce)
-
-            # In warm-up don't change the alphas
             if meta_epoch >= config.warm_up_epochs:
-                meta_model.load_state_dict(meta_state)
+                # Set few-shot task
+                env_normal.set_task(task)
+                env_reduce.set_task(task)
+
+                # Now optimize alphas for better initialization
+                meta_rl_agent.train_agent(env_normal)
+                meta_rl_agent.train_agent(env_reduce)
+
+                # In warm-up don't change the alphas
+                if meta_epoch >= config.warm_up_epochs:
+                    meta_model.load_state_dict(meta_state)
 
             task_infos += [
                 task_optimizer.step(
