@@ -83,7 +83,8 @@ class NasEnv(gym.Env):
         self.set_start_state()
 
         # Set baseline accuracy to scale the reward
-        self.baseline_acc = self.compute_reward()
+        _, self.baseline_acc = self.compute_reward()
+        print("baseline acc:", self.baseline_acc)
 
         return self.current_state
 
@@ -218,7 +219,7 @@ class NasEnv(gym.Env):
         start = time.time()
 
         # Mutates the meta_model and the local state
-        action_info, reward = self._perform_action(action)
+        action_info, reward, acc = self._perform_action(action)
 
         # The final step time
         end = time.time()
@@ -235,6 +236,7 @@ class NasEnv(gym.Env):
             "action_id": action,
             "action": action_info,
             "reward": reward,
+            "acc": acc,
             "done": done
         }
 
@@ -244,8 +246,10 @@ class NasEnv(gym.Env):
         next_node = int(self.current_state[1])
         row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
 
+        if acc is not None:
+            acc = round(acc, 2)
         print(
-            f"\nstep: {self.step_count}, action: {action}, {action_info}, rew: {reward:.2f}")
+            f"\nstep: {self.step_count}, action: {action}, {action_info}, rew: {reward:.2f}, acc: {acc}")
         if self.cell_type == "normal":
             print(['%.2f' % elem for elem in list(
                 self.meta_model.alpha_normal[row_idx][edge_idx].cpu().detach().numpy())])
@@ -267,6 +271,7 @@ class NasEnv(gym.Env):
 
         action_info = ""
         reward = 0
+        acc = None
 
         # denotes the current edge it is on
         cur_node = int(self.current_state[0])
@@ -331,7 +336,7 @@ class NasEnv(gym.Env):
                 self.current_state = self.states[s_idx]
 
                 # Compute reward after updating
-                reward = self.compute_reward()
+                reward, acc = self.compute_reward()
             else:
                 increase_val = 0.0
 
@@ -373,7 +378,7 @@ class NasEnv(gym.Env):
                 self.current_state = self.states[s_idx]
 
                 # Compute reward after updating
-                reward = self.compute_reward()
+                reward, acc = self.compute_reward()
             else:
                 decrease_val = 0.0
 
@@ -387,7 +392,7 @@ class NasEnv(gym.Env):
             self.terminate_episode = True
             action_info = f"Terminate the episode at step {self.step_count}"
 
-        return action_info, reward
+        return action_info, reward, acc
 
     # Calculation/Estimations of the reward
 
@@ -403,7 +408,7 @@ class NasEnv(gym.Env):
 
         # Scale reward to (-1, 1) range
         reward = self.scale_reward(acc)
-        return reward
+        return reward, acc
 
     def scale_reward(self, accuracy):
         """
@@ -421,14 +426,14 @@ class NasEnv(gym.Env):
 
         if self.baseline_acc <= accuracy:
             a1, a2 = self.baseline_acc, 1.0
-            b1, b2 = 0.0, 1.0
+            b1, b2 = 0.0, 5.0
 
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
         # Map accuracies smaller than the baseline to
         # [-1, 0]
         elif self.baseline_acc >= accuracy:
             a1, a2 = 0.0, self.baseline_acc
-            b1, b2 = -1, 0.0
+            b1, b2 = -0.3, 0.0
 
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
         # Else, the reward is 0, baseline_acc == accuracy

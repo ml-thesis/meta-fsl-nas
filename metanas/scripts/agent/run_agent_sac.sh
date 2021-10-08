@@ -70,7 +70,7 @@ do
         --agent_hidden_size 256 \
         --agent_epochs 10 \
         --agent_update_every 1000 \
-        --agent_update_after 10000
+        --agent_update_after 1000
     )
 
     python -u -m metanas.metanas_main "${args[@]}"
