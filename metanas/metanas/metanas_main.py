@@ -497,9 +497,9 @@ def train(
     env_normal = NasEnv(config, meta_model,
                         cell_type="normal",
                         reward_estimation=config.use_rew_estimation)
-    env_reduce = NasEnv(config, meta_model,
-                        cell_type="reduce",
-                        reward_estimation=config.use_rew_estimation)
+    # env_reduce = NasEnv(config, meta_model,
+    #                     cell_type="reduce",
+    #                     reward_estimation=config.use_rew_estimation)
 
     for meta_epoch in range(config.start_epoch, config.meta_epochs + 1):
 
@@ -528,11 +528,11 @@ def train(
             if meta_epoch >= config.warm_up_epochs:
                 # Set few-shot task
                 env_normal.set_task(task)
-                env_reduce.set_task(task)
+                # env_reduce.set_task(task)
 
                 # Now optimize alphas for better initialization
                 meta_rl_agent.train_agent(env_normal)
-                meta_rl_agent.train_agent(env_reduce)
+                # meta_rl_agent.train_agent(env_reduce)
 
                 # In warm-up don't change the alphas
                 if meta_epoch >= config.warm_up_epochs:

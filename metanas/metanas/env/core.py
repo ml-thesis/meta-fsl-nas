@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
+import math
+import copy
 import time
 import gym
 from gym import spaces
@@ -27,6 +29,7 @@ class NasEnv(gym.Env):
         self.test_env = test_env
         self.cell_type = cell_type
         self.primitives = config.primitives
+        self.n_ops = len(config.primitives)
         self.reward_estimation = reward_estimation
 
         self.test_phase = test_phase
@@ -66,6 +69,16 @@ class NasEnv(gym.Env):
         action_size = len(self.A) + 2*len(self. primitives) + 1
         self.action_space = spaces.Discrete(action_size)
 
+        # On setting a task, also store the initial meta_model alphas
+        # TODO: Celltype check
+        self.initial_alphas = [
+            copy.deepcopy(alpha.detach()) for alpha
+            in self.meta_model.alpha_normal
+        ]
+
+        # TODO: Store best alphas obtained yet,
+        self.best_alphas = []
+
     def reset(self):
         """Reset the environment state"""
         # Add clause for testing the environment in which the task
@@ -76,6 +89,9 @@ class NasEnv(gym.Env):
         # Initialize the step counters
         self.step_count = 0
         self.terminate_episode = False
+
+        for row_idx, row in enumerate(self.meta_model.alpha_normal):
+            row = self.initial_alphas[row_idx]
 
         self.update_states()
 
@@ -91,6 +107,7 @@ class NasEnv(gym.Env):
     def set_task(self, task):
         """The meta-loop passes the task for the environment to solve"""
         self.current_task = task
+
         self.reset()
 
     def initialize_observation_space(self):
@@ -180,7 +197,85 @@ class NasEnv(gym.Env):
         self.current_state = self.states[
             self.current_state_index]
 
-    def update_meta_model(self, value, row_idx, edge_idx, op_idx):
+    # Methods to increase alphas
+    def _inverse_softmax(self, x, C):
+        return torch.log(x) + C
+
+    def calculate_C_term(self, alpha):
+        # Calculate estimate to keep the alphas in similar range
+        # either calculate C term or math.log(10.)
+        e_xi = torch.exp(alpha)
+        sum_i = torch.sum(e_xi)
+        c_i = torch.log(sum_i)
+        return c_i
+
+    def increase_op(self, row_idx, edge_idx, op_idx, prob=0.3):
+        C = math.log(10.)
+        # self.calculate_C_term(self.alphas[row_idx][edge_idx])
+
+        # Set short-hands
+        curr_op = self.normalized_alphas[row_idx][edge_idx][op_idx]
+        curr_edge = self.normalized_alphas[row_idx][edge_idx]
+
+        # Allow for increasing to 0.99
+        if curr_op + prob > 1.0:
+            surplus = curr_op + prob - 0.99
+            prob -= surplus
+
+        if curr_op + prob < 1.0:
+            # Increase chosen op
+            with torch.no_grad():
+                curr_op += prob
+
+            # Prevent 0.00 normalized alpha values, resulting in
+            # -inf
+            with torch.no_grad():
+                curr_edge += 0.01
+
+            # Set the meta-model, update the env state in
+            # self.update_states()
+            with torch.no_grad():
+                self.meta_model.alpha_normal[row_idx][edge_idx] = self._inverse_softmax(
+                    curr_edge, C)
+
+            # True if state is mutated
+            return True
+        # False if no update occured
+        return False
+
+    def decrease_op(self, row_idx, edge_idx, op_idx, prob=0.3):
+        C = math.log(10.)
+        # self.calculate_C_term(self.alphas[row_idx][edge_idx])
+
+        # Set short-hands
+        curr_op = self.normalized_alphas[row_idx][edge_idx][op_idx]
+        curr_edge = self.normalized_alphas[row_idx][edge_idx]
+
+        # Allow for increasing to 0.99
+        if curr_op - prob < 0.0:
+            surplus = prob - curr_op + 0.01
+            prob -= surplus
+
+        if curr_op - prob > 0.0:
+            # Increase chosen op
+            with torch.no_grad():
+                curr_op -= prob
+
+            # Prevent 0.00 normalized alpha values, resulting in
+            # -inf
+            with torch.no_grad():
+                curr_edge += 0.01
+
+            with torch.no_grad():
+                self.meta_model.alpha_normal[row_idx][edge_idx] = self._inverse_softmax(
+                    curr_edge, C)
+
+            # True if state is mutated
+            return True
+        # False if no update occured
+        return False
+
+    def update_meta_model(self, increase, row_idx, edge_idx, op_idx):
         """Adjust alpha value of the meta-model for a given element
         and value
 
@@ -189,23 +284,31 @@ class NasEnv(gym.Env):
         """
 
         if self.cell_type == "normal":
-            with torch.no_grad():
-                self.meta_model.alpha_normal[
-                    row_idx][edge_idx][op_idx] += value
+            # Replace with adjusting probabilities directly
+            # with torch.no_grad():
+            #     self.meta_model.alpha_normal[
+            #         row_idx][edge_idx][op_idx] += value
 
-                max_alpha = torch.max(self.meta_model.alpha_normal[
-                    row_idx][edge_idx])
-                self.meta_model.alpha_normal[
-                    row_idx][edge_idx] /= max_alpha
+            #     max_alpha = torch.max(self.meta_model.alpha_normal[
+            #         row_idx][edge_idx])
+            #     self.meta_model.alpha_normal[
+            #         row_idx][edge_idx] /= max_alpha
+
+            # TODO: Pass probability
+            if increase:
+                return self.increase_op(row_idx, edge_idx, op_idx)
+            else:
+                return self.decrease_op(row_idx, edge_idx, op_idx)
 
         elif self.cell_type == "reduce":
-            with torch.no_grad():
-                self.meta_model.alpha_reduce[
-                    row_idx][edge_idx][op_idx] += value
-                max_alpha = torch.max(self.meta_model.alpha_reduce[
-                    row_idx][edge_idx])
-                self.meta_model.alpha_reduce[
-                    row_idx][edge_idx] /= max_alpha
+            # with torch.no_grad():
+            #     self.meta_model.alpha_reduce[
+            #         row_idx][edge_idx][op_idx] += value
+            #     max_alpha = torch.max(self.meta_model.alpha_reduce[
+            #         row_idx][edge_idx])
+            #     self.meta_model.alpha_reduce[
+            #         row_idx][edge_idx] /= max_alpha
+            raise NotImplementedError("Only normal cell is working")
 
         else:
             raise RuntimeError(f"Cell type {self.cell_type} is not supported.")
@@ -218,8 +321,18 @@ class NasEnv(gym.Env):
     def step(self, action):
         start = time.time()
 
+        cur_node = int(self.current_state[0])
+        next_node = int(self.current_state[1])
+        row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
+        norm_a1 = F.softmax(
+            self.meta_model.alpha_normal[row_idx][edge_idx], dim=-1).detach().cpu()
+
         # Mutates the meta_model and the local state
         action_info, reward, acc = self._perform_action(action)
+
+        if acc is not None:
+            if acc > 0.0:
+                self.baseline_acc = acc
 
         # The final step time
         end = time.time()
@@ -240,26 +353,15 @@ class NasEnv(gym.Env):
             "done": done
         }
 
-        # print("action:", a, "dict:", info_dict)
-
-        cur_node = int(self.current_state[0])
-        next_node = int(self.current_state[1])
-        row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
+        norm_a2 = F.softmax(
+            self.meta_model.alpha_normal[row_idx][edge_idx], dim=-1).detach().cpu()
 
         if acc is not None:
             acc = round(acc, 2)
         print(
             f"\nstep: {self.step_count}, action: {action}, {action_info}, rew: {reward:.2f}, acc: {acc}")
-        if self.cell_type == "normal":
-            print(['%.2f' % elem for elem in list(
-                self.meta_model.alpha_normal[row_idx][edge_idx].cpu().detach().numpy())])
-        else:
-            print(['%.2f' % elem for elem in list(
-                self.meta_model.alpha_reduce[row_idx][edge_idx].cpu().detach().numpy())])
-
-        if np.any(np.isnan(np.array(self.current_state))):
-            print([alpha for alpha in self.meta_model.alpha_normal])
-            print([alpha for alpha in self.meta_model.alpha_reduce])
+        print(['%.2f' % elem for elem in list(norm_a1)])
+        print(['%.2f' % elem for elem in list(norm_a2)])
 
         return self.current_state, reward, done, info_dict
 
@@ -295,7 +397,7 @@ class NasEnv(gym.Env):
             elif self.A[next_node][action] < 1:
                 # Illegal next_node is not connected the action node
                 # return reward -1, and stay in the same edge
-                reward = -1
+                reward = -0.1
 
                 action_info = f"Illegal move from {cur_node} to {action}"
 
@@ -318,27 +420,29 @@ class NasEnv(gym.Env):
             # we skip the calculation.
             # or if the current alpha is larger than sum of all other alphas
             # this will spiral into NaN values,
-            if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
-                    not current_alpha > abs_sum - current_alpha:
+            # if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
+            #         not current_alpha > abs_sum - current_alpha:
 
-                # Make 0.1 configurable?
-                increase_val = abs_sum * 0.10
+            # Make 0.1 configurable?
+            # increase_val = abs_sum  # * 0.10
+            increase = True
 
-                self.update_meta_model(increase_val,
-                                       row_idx,
-                                       edge_idx,
-                                       action)
+            update = self.update_meta_model(increase,
+                                            row_idx,
+                                            edge_idx,
+                                            action)
 
+            if update:
                 # Update the local state after increasing the alphas
                 self.update_states()
 
-                # Set current state again!
-                self.current_state = self.states[s_idx]
+            # Set current state again!
+            self.current_state = self.states[s_idx]
 
-                # Compute reward after updating
-                reward, acc = self.compute_reward()
-            else:
-                increase_val = 0.0
+            # Compute reward after updating
+            reward, acc = self.compute_reward()
+            # else:
+            increase_val = 0.0
 
             loc = f"({row_idx}, {edge_idx}, {action})"
             action_info = f"Increase alpha {loc} by {increase_val:.3f}"
@@ -360,27 +464,30 @@ class NasEnv(gym.Env):
 
             # If the current operation is already the maximum operator
             # we skip the calculation.
-            if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
-                    not current_alpha > abs_sum - current_alpha:
+            # if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
+            #         not current_alpha > abs_sum - current_alpha:
 
-                # Make 0.1 configurable?
-                decrease_val = abs_sum * 0.10
+            # Make 0.1 configurable?
+            # decrease_val = abs_sum  # * 0.10
 
-                self.update_meta_model(decrease_val,
-                                       row_idx,
-                                       edge_idx,
-                                       action)
+            increase = False
 
+            update = self.update_meta_model(increase,
+                                            row_idx,
+                                            edge_idx,
+                                            action)
+
+            if update:
                 # Update the local state after increasing the alphas
                 self.update_states()
 
-                # Set current state again!
-                self.current_state = self.states[s_idx]
+            # Set current state again!
+            self.current_state = self.states[s_idx]
 
-                # Compute reward after updating
-                reward, acc = self.compute_reward()
-            else:
-                decrease_val = 0.0
+            # Compute reward after updating
+            reward, acc = self.compute_reward()
+        # else:
+            decrease_val = 0.0
 
             loc = f"({row_idx}, {edge_idx}, {action})"
             action_info = f"Decrease alpha {loc} by {decrease_val:.3f}"
@@ -426,14 +533,14 @@ class NasEnv(gym.Env):
 
         if self.baseline_acc <= accuracy:
             a1, a2 = self.baseline_acc, 1.0
-            b1, b2 = 0.0, 5.0
+            b1, b2 = 0.0, 4.0
 
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
         # Map accuracies smaller than the baseline to
         # [-1, 0]
         elif self.baseline_acc >= accuracy:
             a1, a2 = 0.0, self.baseline_acc
-            b1, b2 = -0.3, 0.0
+            b1, b2 = -0.1, 0.0
 
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
         # Else, the reward is 0, baseline_acc == accuracy
