@@ -534,8 +534,12 @@ def train(
             # meta_rl_agent.train_agent(env_reduce)
 
             # In warm-up don't change the alphas
-            if meta_epoch >= config.warm_up_epochs:
+            if meta_epoch <= config.warm_up_epochs:
                 meta_model.load_state_dict(meta_state)
+            else:
+                # TODO: Obtain better meta_model state for task-learning
+                # and set.
+                normal_alphas = env_normal.get_max_alphas()
 
             task_infos += [
                 task_optimizer.step(

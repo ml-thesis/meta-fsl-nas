@@ -43,7 +43,7 @@ class NasEnv(gym.Env):
         # The task is set in the meta-loop
         self.current_task = None
         self.max_ep_len = max_ep_len  # max_steps
-        self.reward_range = (-1, 1)
+        self.reward_range = (-0.1, 4)
 
         # Initialize the step counter
         self.step_count = 0
@@ -71,7 +71,8 @@ class NasEnv(gym.Env):
         self.action_space = spaces.Discrete(action_size)
 
         # TODO: Store best alphas/or model obtained yet,
-        # self.best_alphas = []
+        self.max_alphas = []
+        self.max_acc = 0.0
 
         # weights optimizer
         self.w_optim = torch.optim.Adam(
@@ -93,10 +94,7 @@ class NasEnv(gym.Env):
         self.terminate_episode = False
 
         # Set alphas and weights of the model
-        # for row_idx, row in enumerate(self.meta_model.alpha_normal):
-        #     row = self.initial_alphas[row_idx]
         self.meta_model.load_state_dict(self.meta_state)
-
         self.update_states()
 
         # Set starting edge for agent
@@ -114,6 +112,14 @@ class NasEnv(gym.Env):
         self.meta_state = meta_state
 
         self.reset()
+
+        # Reset best alphas and accuracy for current trial
+        self.max_acc = 0.0
+
+        # TODO: Check celltype
+        self.max_alphas = []
+        for _, row in enumerate(self.meta_model.alpha_normal):
+            self.max_alphas.append(row)
 
     def initialize_observation_space(self):
         # Generate the internal states of the graph
@@ -298,6 +304,9 @@ class NasEnv(gym.Env):
         for row in self.states:
             print(row)
 
+    def get_max_alphas(self):
+        return self.max_alphas
+
     def step(self, action):
         start = time.time()
 
@@ -310,9 +319,16 @@ class NasEnv(gym.Env):
         # Mutates the meta_model and the local state
         action_info, reward, acc = self._perform_action(action)
 
-        if acc is not None:
-            if acc > 0.0:
-                self.baseline_acc = acc
+        if acc is not None and acc > 0.0:
+            self.baseline_acc = acc
+
+            if self.max_acc < acc:
+                self.max_acc = acc
+
+                # TODO: Check celltype
+                self.max_alphas = []
+                for _, row in enumerate(self.meta_model.alpha_normal):
+                    self.max_alphas.append(row.to(self.config.device))
 
         # The final step time
         end = time.time()
@@ -482,8 +498,6 @@ class NasEnv(gym.Env):
             a1, a2 = self.baseline_acc, 1.0
             b1, b2 = 0.0, 4.0
 
-            # TODO: Division by zero errors if
-            # a2 = 1 and a2 = 1
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
         # Map accuracies smaller than the baseline to
         # [-1, 0]
@@ -496,10 +510,6 @@ class NasEnv(gym.Env):
         return reward
 
     def _darts_estimation(self, task):
-        # TODO: Appropriate refactor of the accuracy calculation,
-        # Only estimating on the training set, no training (yet).
-        # self.meta_model.eval()
-
         # First train the weights with few steps on current batch
         self.meta_model.train()
 
