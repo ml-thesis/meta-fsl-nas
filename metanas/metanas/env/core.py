@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 import numpy as np
 
 import math
@@ -69,15 +70,16 @@ class NasEnv(gym.Env):
         action_size = len(self.A) + 2*len(self. primitives) + 1
         self.action_space = spaces.Discrete(action_size)
 
-        # On setting a task, also store the initial meta_model alphas
-        # TODO: Celltype check
-        self.initial_alphas = [
-            copy.deepcopy(alpha.detach()) for alpha
-            in self.meta_model.alpha_normal
-        ]
+        # TODO: Store best alphas/or model obtained yet,
+        # self.best_alphas = []
 
-        # TODO: Store best alphas obtained yet,
-        self.best_alphas = []
+        # weights optimizer
+        self.w_optim = torch.optim.Adam(
+            self.meta_model.weights(),
+            lr=self.config.w_lr,
+            betas=(0.0, 0.999),
+            weight_decay=self.config.w_weight_decay,
+        )
 
     def reset(self):
         """Reset the environment state"""
@@ -90,8 +92,10 @@ class NasEnv(gym.Env):
         self.step_count = 0
         self.terminate_episode = False
 
-        for row_idx, row in enumerate(self.meta_model.alpha_normal):
-            row = self.initial_alphas[row_idx]
+        # Set alphas and weights of the model
+        # for row_idx, row in enumerate(self.meta_model.alpha_normal):
+        #     row = self.initial_alphas[row_idx]
+        self.meta_model.load_state_dict(self.meta_state)
 
         self.update_states()
 
@@ -100,13 +104,14 @@ class NasEnv(gym.Env):
 
         # Set baseline accuracy to scale the reward
         _, self.baseline_acc = self.compute_reward()
-        print("baseline acc:", self.baseline_acc)
 
         return self.current_state
 
-    def set_task(self, task):
+    def set_task(self, task, meta_state):
         """The meta-loop passes the task for the environment to solve"""
+        print("Set new task for environment")
         self.current_task = task
+        self.meta_state = meta_state
 
         self.reset()
 
@@ -201,14 +206,6 @@ class NasEnv(gym.Env):
     def _inverse_softmax(self, x, C):
         return torch.log(x) + C
 
-    def calculate_C_term(self, alpha):
-        # Calculate estimate to keep the alphas in similar range
-        # either calculate C term or math.log(10.)
-        e_xi = torch.exp(alpha)
-        sum_i = torch.sum(e_xi)
-        c_i = torch.log(sum_i)
-        return c_i
-
     def increase_op(self, row_idx, edge_idx, op_idx, prob=0.3):
         C = math.log(10.)
         # self.calculate_C_term(self.alphas[row_idx][edge_idx])
@@ -245,7 +242,6 @@ class NasEnv(gym.Env):
 
     def decrease_op(self, row_idx, edge_idx, op_idx, prob=0.3):
         C = math.log(10.)
-        # self.calculate_C_term(self.alphas[row_idx][edge_idx])
 
         # Set short-hands
         curr_op = self.normalized_alphas[row_idx][edge_idx][op_idx]
@@ -284,15 +280,6 @@ class NasEnv(gym.Env):
         """
 
         if self.cell_type == "normal":
-            # Replace with adjusting probabilities directly
-            # with torch.no_grad():
-            #     self.meta_model.alpha_normal[
-            #         row_idx][edge_idx][op_idx] += value
-
-            #     max_alpha = torch.max(self.meta_model.alpha_normal[
-            #         row_idx][edge_idx])
-            #     self.meta_model.alpha_normal[
-            #         row_idx][edge_idx] /= max_alpha
 
             # TODO: Pass probability
             if increase:
@@ -301,13 +288,6 @@ class NasEnv(gym.Env):
                 return self.decrease_op(row_idx, edge_idx, op_idx)
 
         elif self.cell_type == "reduce":
-            # with torch.no_grad():
-            #     self.meta_model.alpha_reduce[
-            #         row_idx][edge_idx][op_idx] += value
-            #     max_alpha = torch.max(self.meta_model.alpha_reduce[
-            #         row_idx][edge_idx])
-            #     self.meta_model.alpha_reduce[
-            #         row_idx][edge_idx] /= max_alpha
             raise NotImplementedError("Only normal cell is working")
 
         else:
@@ -321,11 +301,11 @@ class NasEnv(gym.Env):
     def step(self, action):
         start = time.time()
 
-        cur_node = int(self.current_state[0])
-        next_node = int(self.current_state[1])
-        row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
-        norm_a1 = F.softmax(
-            self.meta_model.alpha_normal[row_idx][edge_idx], dim=-1).detach().cpu()
+        # cur_node = int(self.current_state[0])
+        # next_node = int(self.current_state[1])
+        # row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
+        # norm_a1 = F.softmax(
+        #     self.meta_model.alpha_normal[row_idx][edge_idx], dim=-1).detach().cpu()
 
         # Mutates the meta_model and the local state
         action_info, reward, acc = self._perform_action(action)
@@ -348,20 +328,19 @@ class NasEnv(gym.Env):
             "step_count": self.step_count,
             "action_id": action,
             "action": action_info,
-            "reward": reward,
             "acc": acc,
-            "done": done
+            "running_time": running_time,
         }
 
-        norm_a2 = F.softmax(
-            self.meta_model.alpha_normal[row_idx][edge_idx], dim=-1).detach().cpu()
+        # norm_a2 = F.softmax(
+        #     self.meta_model.alpha_normal[row_idx][edge_idx], dim=-1).detach().cpu()
 
-        if acc is not None:
-            acc = round(acc, 2)
-        print(
-            f"\nstep: {self.step_count}, action: {action}, {action_info}, rew: {reward:.2f}, acc: {acc}")
-        print(['%.2f' % elem for elem in list(norm_a1)])
-        print(['%.2f' % elem for elem in list(norm_a2)])
+        # if acc is not None:
+        #     acc = round(acc, 2)
+        # print(
+        #     f"\nstep: {self.step_count}, action: {action}, {action_info}, rew: {reward:.2f}, acc: {acc}")
+        # print(['%.2f' % elem for elem in list(norm_a1)])
+        # print(['%.2f' % elem for elem in list(norm_a2)])
 
         return self.current_state, reward, done, info_dict
 
@@ -372,7 +351,7 @@ class NasEnv(gym.Env):
         """Perform the action on both the meta-model and local state"""
 
         action_info = ""
-        reward = 0
+        reward = 0.0
         acc = None
 
         # denotes the current edge it is on
@@ -411,23 +390,8 @@ class NasEnv(gym.Env):
             row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
-            abs_sum = torch.sum(
-                torch.abs(self.alphas[row_idx][edge_idx]))
-            current_alpha = self.alphas[row_idx][edge_idx][action]
-            abs_sum = abs_sum - torch.abs(current_alpha)
-
-            # If the current operation is already the maximum operator
-            # we skip the calculation.
-            # or if the current alpha is larger than sum of all other alphas
-            # this will spiral into NaN values,
-            # if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
-            #         not current_alpha > abs_sum - current_alpha:
-
-            # Make 0.1 configurable?
-            # increase_val = abs_sum  # * 0.10
-            increase = True
-
-            update = self.update_meta_model(increase,
+            # True = increase
+            update = self.update_meta_model(True,
                                             row_idx,
                                             edge_idx,
                                             action)
@@ -441,11 +405,8 @@ class NasEnv(gym.Env):
 
             # Compute reward after updating
             reward, acc = self.compute_reward()
-            # else:
-            increase_val = 0.0
 
-            loc = f"({row_idx}, {edge_idx}, {action})"
-            action_info = f"Increase alpha {loc} by {increase_val:.3f}"
+            action_info = f"Increase alpha ({row_idx}, {edge_idx}, {action})"
 
         # Decreasing the alpha for the given operation
         if action in np.arange(len(self.A)+len(self.primitives),
@@ -457,22 +418,8 @@ class NasEnv(gym.Env):
             row_idx, edge_idx = self.edge_to_alpha[(cur_node, next_node)]
             s_idx = self.edge_to_index[(cur_node, next_node)]
 
-            abs_sum = torch.sum(
-                torch.abs(self.alphas[row_idx][edge_idx]))
-            current_alpha = self.alphas[row_idx][edge_idx][action]
-            abs_sum = abs_sum - torch.abs(current_alpha)
-
-            # If the current operation is already the maximum operator
-            # we skip the calculation.
-            # if action != torch.argmax(self.alphas[row_idx][edge_idx]) and \
-            #         not current_alpha > abs_sum - current_alpha:
-
-            # Make 0.1 configurable?
-            # decrease_val = abs_sum  # * 0.10
-
-            increase = False
-
-            update = self.update_meta_model(increase,
+            # False = decrease
+            update = self.update_meta_model(False,
                                             row_idx,
                                             edge_idx,
                                             action)
@@ -486,11 +433,8 @@ class NasEnv(gym.Env):
 
             # Compute reward after updating
             reward, acc = self.compute_reward()
-        # else:
-            decrease_val = 0.0
 
-            loc = f"({row_idx}, {edge_idx}, {action})"
-            action_info = f"Decrease alpha {loc} by {decrease_val:.3f}"
+            action_info = f"Decrease alpha ({row_idx}, {edge_idx}, {action})"
 
         # Terminate the episode
         if action in np.arange(len(self.A)+2*len(self.primitives),
@@ -501,9 +445,8 @@ class NasEnv(gym.Env):
 
         return action_info, reward, acc
 
-    # Calculation/Estimations of the reward
-
     def compute_reward(self):
+        # Calculation/Estimations of the reward
         # For testing env
         if self.test_env is not None:
             return np.random.uniform(low=-1, high=1, size=(1,))[0]
@@ -531,10 +474,16 @@ class NasEnv(gym.Env):
         # [0, 1]
         reward = 0
 
+        # Else, the reward is 0
+        if self.baseline_acc == accuracy:
+            return 0.0
+
         if self.baseline_acc <= accuracy:
             a1, a2 = self.baseline_acc, 1.0
             b1, b2 = 0.0, 4.0
 
+            # TODO: Division by zero errors if
+            # a2 = 1 and a2 = 1
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
         # Map accuracies smaller than the baseline to
         # [-1, 0]
@@ -543,28 +492,42 @@ class NasEnv(gym.Env):
             b1, b2 = -0.1, 0.0
 
             reward = b1 + ((accuracy-a1)*(b2-b1)) / (a2-a1)
-        # Else, the reward is 0, baseline_acc == accuracy
 
         return reward
 
     def _darts_estimation(self, task):
         # TODO: Appropriate refactor of the accuracy calculation,
         # Only estimating on the training set, no training (yet).
-        self.meta_model.eval()
+        # self.meta_model.eval()
 
-        train_acc = []
+        # First train the weights with few steps on current batch
+        self.meta_model.train()
 
-        # with torch.no_grad():
         for _, (train_X, train_y) in enumerate(task.train_loader):
             train_X, train_y = train_X.to(
                 self.config.device), train_y.to(self.config.device)
 
+            self.w_optim.zero_grad()
             logits = self.meta_model(train_X)
 
-            prec1, _ = utils.accuracy(logits, train_y, topk=(1, 5))
-            train_acc.append(prec1.item())
+            loss = self.meta_model.criterion(logits, train_y)
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.meta_model.weights(),
+                                     self.config.w_grad_clip)
+            self.w_optim.step()
 
-        reward = sum(train_acc) / len(train_acc)
+        for batch_idx, batch in enumerate(task.test_loader):
+            x_test, y_test = batch
+            x_test = x_test.to(self.config.device, non_blocking=True)
+            y_test = y_test.to(self.config.device, non_blocking=True)
+
+            logits = self.meta_model(
+                x_test, sparsify_input_alphas=True
+            )
+
+            prec1, _ = utils.accuracy(logits, y_test, topk=(1, 5))
+
+        reward = prec1.item()
         return reward
 
     def _meta_predictor_estimation(self, task):

@@ -302,8 +302,6 @@ def train(
 
     model.train()
 
-    train_acc = []
-
     for step, ((train_X, train_y), (val_X, val_y)) in enumerate(
         zip(task.train_loader, task.valid_loader)
     ):

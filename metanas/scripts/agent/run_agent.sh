@@ -7,8 +7,8 @@
 # tensorboard --logdir=/home/rob/Git/meta-fsl-nas/metanas/results/agent
 
 # parameters
-EPOCHS=250
-WARM_UP_EPOCHS=250
+EPOCHS=200
+WARM_UP_EPOCHS=0
 SEEDS=(2)
 SEEDS_TWO=(1)
 EVAL_FREQ=50

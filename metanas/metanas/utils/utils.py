@@ -159,16 +159,18 @@ def set_rl_hyperparameters(config):
     config.logger_kwargs = setup_logger_kwargs(config.path,
                                                seed=config.seed)
     print(config.logger_kwargs)
-    config.agent_steps_per_epoch = 2000
-    config.num_test_episodes = 10
+    config.agent_steps_per_trial = 500
+    config.num_test_episodes = 3
 
     if config.agent == "sac":
         config.gamma = 0.99
         config.polyak = 0.995
         config.agent_lr = 3e-4
+
+        config.agent_trials_per_mdp = 1
         config.agent_batch_size = 8
         config.agent_update_every = 20
-        config.agent_start_steps = 1000
+        config.agent_start_steps = 400
 
         config.save_freq = 1
         config.replay_size = int(1e6)
