@@ -194,8 +194,8 @@ def _init_meta_rl_agent(config, meta_model):
     if config.agent == "random":
         agent = RandomAgent(config,
                             env_normal,
-                            epochs=config.agent_epochs,
-                            steps_per_epoch=config.agent_steps_per_epoch,
+                            epochs=config.agent_trials_per_mdp,
+                            steps_per_epoch=config.agent_steps_per_trial,
                             num_test_episodes=config.num_test_episodes,
                             logger_kwargs=config.logger_kwargs)
     else:
@@ -208,8 +208,8 @@ def _init_meta_rl_agent(config, meta_model):
                     lr=config.agent_lr,
                     hidden_size=config.agent_hidden_size,
                     logger_kwargs=config.logger_kwargs,
-                    epochs=config.agent_epochs,
-                    steps_per_epoch=config.agent_steps_per_epoch,
+                    epochs=config.agent_trials_per_mdp,
+                    steps_per_epoch=config.agent_steps_per_trial,
                     start_steps=config.agent_start_steps,
                     update_after=config.agent_update_after,
                     update_every=config.agent_update_every,
@@ -525,18 +525,21 @@ def train(
         time_bs = time.time()
         for task in meta_train_batch:
 
-            if meta_epoch >= config.warm_up_epochs:
-                # Set few-shot task
-                env_normal.set_task(task)
-                # env_reduce.set_task(task)
+            # Set few-shot task
+            env_normal.set_task(task, meta_state)
+            # env_reduce.set_task(task)
 
-                # Now optimize alphas for better initialization
-                meta_rl_agent.train_agent(env_normal)
-                # meta_rl_agent.train_agent(env_reduce)
+            # Now optimize alphas for better initialization
+            meta_rl_agent.train_agent(env_normal)
+            # meta_rl_agent.train_agent(env_reduce)
 
-                # In warm-up don't change the alphas
-                if meta_epoch >= config.warm_up_epochs:
-                    meta_model.load_state_dict(meta_state)
+            # In warm-up don't change the alphas
+            if meta_epoch <= config.warm_up_epochs:
+                meta_model.load_state_dict(meta_state)
+            else:
+                # TODO: Obtain better meta_model state for task-learning
+                # and set.
+                normal_alphas = env_normal.get_max_alphas()
 
             task_infos += [
                 task_optimizer.step(
@@ -1133,10 +1136,6 @@ if __name__ == "__main__":
         help="Use meta_predictor for the env reward estimation")
 
     parser.add_argument("--agent_hidden_size",
-                        type=int,
-                        default=None)
-
-    parser.add_argument("--agent_epochs",
                         type=int,
                         default=None)
 

@@ -18,11 +18,14 @@ class NAS_agent(ABC):
         self.env = env
         self.test_env = env  # not used
 
-        # Number of episodes in the trial
+        # Number of episodes in a trial, thus,
+        # epochs = 1
         self.epochs = epochs
         self.num_test_episodes = num_test_episodes
 
-        # TODO: Set equal to maximum episode length?
+        self.global_steps = 0
+
+        # Number of steps in a single trial
         self.steps_per_epoch = steps_per_epoch
         self.total_steps = steps_per_epoch * epochs
 

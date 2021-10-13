@@ -3,6 +3,7 @@
 DATASET=$DS
 AGENT=sac
 DATASET_DIR=/home/rob/Git/meta-fsl-nas/data
+MODEL_PATH=/home/rob/Desktop/e200_meta_state
 
 for SEED in ${SEEDS}
 do
@@ -66,11 +67,13 @@ do
         --use_limit_skip_connection \
 
         # meta-RL agent
+        # Warm-up pre-trained,
+        --model_path ${MODEL_PATH} \
+
         --agent ${AGENT} \
         --agent_hidden_size 256 \
-        --agent_epochs 10 \
-        --agent_update_every 1000 \
-        --agent_update_after 1000
+        --agent_update_every 20 \
+        --agent_update_after 400
     )
 
     python -u -m metanas.metanas_main "${args[@]}"

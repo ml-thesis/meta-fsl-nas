@@ -196,7 +196,7 @@ class SAC(RL_agent):
             time_step=20
         )
 
-        # Optimize alpha value or set to 0.2
+        # Optimize entropy exploration-exploitation parameter
         self.entropy_target = 0.98 * (-np.log(1 / self.env.action_space.n))
         self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
         self.alpha = self.log_alpha.exp()
@@ -207,7 +207,6 @@ class SAC(RL_agent):
         self.q_optimizer = Adam(self.q_params, lr=self.lr)
 
         # Logging for meta-training
-        self.meta_epoch = 0
         self.start_time = None
 
         # Count variables
@@ -217,15 +216,17 @@ class SAC(RL_agent):
             '\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n' % var_counts)
 
     def init_hidden_states(self, batch_size):
-        h = torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
-        return h
+        return torch.zeros([1, batch_size, self.hidden_size]).to(self.device)
 
     def compute_critic_loss(self, batch, seq_len):
         obs, act, rew, next_obs, prev_act, prev_rew, done = batch
 
+        # Init hiddens
         h_targ1 = self.init_hidden_states(batch_size=self.batch_size)
         h_targ2 = self.init_hidden_states(batch_size=self.batch_size)
+
         h = self.init_hidden_states(batch_size=self.batch_size)
+
         h1 = self.init_hidden_states(batch_size=self.batch_size)
         h2 = self.init_hidden_states(batch_size=self.batch_size)
 
@@ -347,8 +348,10 @@ class SAC(RL_agent):
                 p_targ.data.add_((1 - self.polyak) * p.data)
 
     def get_action(self, o, prev_a, prev_r, hid, greedy=True):
-        o = torch.Tensor(o).float().to(self.device).unsqueeze(0).unsqueeze(0)
-        prev_a = torch.Tensor([prev_a]).float().to(self.device).unsqueeze(0)
+        o = torch.Tensor(o).float().to(
+            self.device).unsqueeze(0).unsqueeze(0)
+        prev_a = torch.Tensor([prev_a]).float().to(
+            self.device).unsqueeze(0)
         prev_r = torch.Tensor([prev_r]).float().to(
             self.device).unsqueeze(0).unsqueeze(-1)
 
@@ -391,10 +394,14 @@ class SAC(RL_agent):
 
         start_time = time.time()
         o, ep_ret, ep_len = self.env.reset(), 0, 0
+        ep_max_acc = 0
+
         a2 = self.env.action_space.sample()
         r2 = 0
 
-        for t in range(self.total_steps):
+        # A single trial
+        for t in range(self.global_steps,
+                       self.global_steps+self.total_steps):
 
             # Until start_steps have elapsed, randomly sample actions
             # from a uniform distribution for better exploration. Afterwards,
@@ -405,6 +412,11 @@ class SAC(RL_agent):
                 a = self.env.action_space.sample()
 
             o2, r, d, info_dict = self.env.step(a)
+            acc = info_dict['acc']
+
+            # TODO: Get accuracy from info_dict and measure
+            if acc is not None and acc > ep_max_acc:
+                ep_max_acc = acc
 
             ep_ret += r
             ep_len += 1
@@ -428,10 +440,9 @@ class SAC(RL_agent):
                 self.episode_buffer.put(episode_record)
                 episode_record = EpisodeMemory(self.random_update)
 
-                self.logger.store(EpRet=ep_ret, EpLen=ep_len)
-                o, ep_ret, ep_len = self.env.reset(), 0, 0
-
-                # h = self.init_hidden_states(batch_size=1)
+                self.logger.store(EpRet=ep_ret, EpLen=ep_len,
+                                  MaxAcc=ep_max_acc)
+                o, ep_ret, ep_len, ep_max_acc = self.env.reset(), 0, 0, 0
 
             # Update handling
             if t >= self.update_after and t % self.update_every == 0:
@@ -441,19 +452,13 @@ class SAC(RL_agent):
             # End of epoch handling
             if (t+1) % self.steps_per_epoch == 0:
                 epoch = (t+1) // self.steps_per_epoch
-                self.meta_epoch += 1
 
                 # Save model
                 if (epoch % self.save_freq == 0) or (epoch == self.epochs):
                     self.logger.save_state({'env': self.env}, None)
 
-                # Test the performance of the deterministic version of the
-                # agent.
-                # self.test_agent()
-
                 # Log info about epoch
-                # 'TestEpRet', 'TestEpLen',
-                log_perf_board = ['EpRet', 'EpLen', 'Q2Vals',
+                log_perf_board = ['EpRet', 'EpLen', 'MaxAcc', 'Q2Vals',
                                   'Q1Vals', 'LogPi']
                 log_loss_board = ['LossPi', 'LossQ']
                 log_board = {'Performance': log_perf_board,
@@ -473,11 +478,10 @@ class SAC(RL_agent):
                             self.summary_writer.add_scalar(
                                 key+'/'+val, mean, t)
 
-                self.logger.log_tabular('Epoch', self.meta_epoch+epoch)
+                self.logger.log_tabular('Epoch', epoch)
                 self.logger.log_tabular('EpRet', with_min_and_max=True)
+                self.logger.log_tabular('MaxAcc', with_min_and_max=True)
                 self.logger.log_tabular('EpLen', average_only=True)
-                # self.logger.log_tabular('TestEpRet', with_min_and_max=True)
-                # self.logger.log_tabular('TestEpLen', average_only=True)
                 self.logger.log_tabular('TotalEnvInteracts', t)
                 self.logger.log_tabular('Q2Vals', with_min_and_max=True)
                 self.logger.log_tabular('Q1Vals', with_min_and_max=True)
@@ -487,3 +491,6 @@ class SAC(RL_agent):
 
                 self.logger.log_tabular('Time', time.time()-self.start_time)
                 self.logger.dump_tabular()
+
+        # Increase global steps for the next trial
+        self.global_steps += self.total_steps
