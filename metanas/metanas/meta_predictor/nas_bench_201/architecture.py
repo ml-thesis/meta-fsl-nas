@@ -4,8 +4,8 @@
 # Copyright (c) Xuanyi Dong [GitHub D-X-Y], 2019.08           #
 ###############################################################
 
-from nas_bench_201.log_utils import Logger, convert_secs2time
-from nas_bench_201.models import CellStructure, CellArchitectures, get_search_spaces
+from metanas.meta_predictor.nas_bench_201.log_utils import Logger, convert_secs2time
+from metanas.meta_predictor.nas_bench_201.models import CellStructure, CellArchitectures, get_search_spaces
 
 from pathlib import Path
 import time

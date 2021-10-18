@@ -10,7 +10,7 @@ __all__ = ['get_cell_based_tiny_net', 'get_search_spaces',
            ]
 
 # useful modules
-from nas_bench_201.config_utils import dict2config
+from metanas.meta_predictor.nas_bench_201.config_utils import dict2config
 from .SharedUtils import change_key
 from .cell_searchs import CellStructure, CellArchitectures
 

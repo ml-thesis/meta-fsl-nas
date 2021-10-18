@@ -21,7 +21,8 @@ def get_meta_train_loader(batch_size, data_path, num_sample, is_pred=False):
     return loader
 
 
-def get_meta_test_loader(data_path, data_name, num_class=None, is_pred=False):
+def get_meta_test_loader(data_path, data_name, num_class=None,
+                         is_pred=False):
     dataset = MetaTestDataset(data_path, data_name, num_class)
     print(f'==> Meta-Test dataset {data_name}')
 
@@ -110,7 +111,8 @@ class MetaTestDataset(Dataset):
         else:
             self.num_class = num_class_dict[data_name]
 
-        self.x = torch.load(os.path.join(data_path, f'{data_name}bylabel.pt'))
+        self.x = torch.load(os.path.join(data_path,
+                                         f'{data_name}bylabel.pt'))
 
     def __len__(self):
         return 1000000

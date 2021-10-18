@@ -1,11 +1,10 @@
-######################################################################################
+###############################################################################
 # Copyright (c) muhanzhang, D-VAE, NeurIPS 2019 [GitHub D-VAE]
 # Modified by Hayeon Lee, Eunyoung Hyung, MetaD2A, ICLR2021, 2021. 03 [GitHub MetaD2A]
-######################################################################################
+###############################################################################
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 from metanas.meta_predictor.predictor.set_encoder import SetPool
 
@@ -22,12 +21,13 @@ class PredictorModel(nn.Module):
         self.gs = args.hs  # size of graph state
         self.bidir = True  # whether to use bidirectional encoding
         self.vid = True
-        self.device = None
+        self.device = args.device
         self.input_type = 'DG'
-        self.num_sample = args.num_sample
+        self.num_samples = args.num_samples
 
         if self.vid:
-            self.vs = self.hs + self.max_n  # vertex state size = hidden state + vid
+            self.vs = self.hs + self.max_n
+            # vertex state size = hidden state + vid
         else:
             self.vs = self.hs
 
@@ -70,7 +70,6 @@ class PredictorModel(nn.Module):
         self.logsoftmax1 = nn.LogSoftmax(1)
 
         # 6. predictor
-        np = self.gs
         self.intra_setpool = SetPool(dim_input=512,
                                      num_outputs=1,
                                      dim_output=self.nz,
@@ -101,20 +100,19 @@ class PredictorModel(nn.Module):
     def predict(self, D_mu, G_mu):
         input_vec = []
         if 'D' in self.input_type:
+            # TODO: Configure view
+            # .view(1, 56)
             input_vec.append(D_mu)
         if 'G' in self.input_type:
             input_vec.append(G_mu)
+        # print(input_vec[0].shape,
+        #       input_vec[1].shape)
         input_vec = torch.cat(input_vec, dim=1)
         return self.pred_fc(input_vec)
 
-    def get_device(self):
-        if self.device is None:
-            self.device = next(self.parameters()).device
-        return self.device
-
     def _get_zeros(self, n, length):
         # get a zero hidden state
-        return torch.zeros(n, length).to(self.get_device())
+        return torch.zeros(n, length).to(self.device)
 
     def _get_zero_hidden(self, n=1):
         return self._get_zeros(n, self.hs)  # get a zero hidden state
@@ -125,11 +123,11 @@ class PredictorModel(nn.Module):
                 return None
             idx = torch.LongTensor(idx).unsqueeze(0).t()
             x = torch.zeros((len(idx), length)).scatter_(
-                1, idx, 1).to(self.get_device())
+                1, idx, 1).to(self.device)
         else:
             idx = torch.LongTensor([idx]).unsqueeze(0)
             x = torch.zeros((1, length)).scatter_(
-                1, idx, 1).to(self.get_device())
+                1, idx, 1).to(self.device)
         return x
 
     def _gated(self, h, gate, mapper):
@@ -138,7 +136,8 @@ class PredictorModel(nn.Module):
     def _collate_fn(self, G):
         return [g.copy() for g in G]
 
-    def _propagate_to(self, G, v, propagator, H=None, reverse=False, gate=None, mapper=None):
+    def _propagate_to(self, G, v, propagator, H=None, reverse=False,
+                      gate=None, mapper=None):
         # propagate messages to vertex index v for all graphs in G
         # return the new messages (states) at v
         G = [g for g in G if g.vcount() > v]
@@ -164,9 +163,11 @@ class PredictorModel(nn.Module):
             if gate is None:
                 gate, mapper = self.gate_forward, self.mapper_forward
         if self.vid:
-            H_pred = [[torch.cat([x[i], y[i:i + 1]], 1)
-                       for i in range(len(x))] for x, y in zip(H_pred, vids)]
-        # if h is not provided, use gated sum of v's predecessors' states as the input hidden state
+            H_pred = [
+                [torch.cat([x[i], y[i:i + 1]], 1) for i in range(len(x))]
+                for x, y in zip(H_pred, vids)]
+        # if h is not provided, use gated sum of v's predecessors' states as
+        # the input hidden state
         if H is None:
             # maximum number of predecessors
             max_n_pred = max([len(x) for x in H_pred])
@@ -174,7 +175,8 @@ class PredictorModel(nn.Module):
                 H = self._get_zero_hidden(len(G))
             else:
                 H_pred = [torch.cat(h_pred +
-                                    [self._get_zeros(max_n_pred - len(h_pred), self.vs)], 0).unsqueeze(0)
+                                    [self._get_zeros(max_n_pred - len(h_pred),
+                                                     self.vs)], 0).unsqueeze(0)
                           for h_pred in H_pred]  # pad all to same length
                 H_pred = torch.cat(H_pred, 0)  # batch * max_n_pred * vs
                 H = self._gated(H_pred, gate, mapper).sum(1)  # batch * hs
@@ -184,8 +186,9 @@ class PredictorModel(nn.Module):
         return Hv
 
     def _propagate_from(self, G, v, propagator, H0=None, reverse=False):
-        # perform a series of propagation_to steps starting from v following a topo order
-        # assume the original vertex indices are in a topological order
+        # perform a series of propagation_to steps starting from v following
+        # a topo order assume the original vertex indices are in a
+        # topological order
         if reverse:
             prop_order = range(v, -1, -1)
         else:
@@ -197,13 +200,15 @@ class PredictorModel(nn.Module):
         return Hv
 
     def _get_graph_state(self, G, decode=False):
-        # get the graph states
-        # when decoding, use the last generated vertex's state as the graph state
-        # when encoding, use the ending vertex state or unify the starting and ending vertex states
+        # get the graph states when decoding, use the last generated vertex's
+        # state as the graph state
+        # when encoding, use the ending vertex state or unify the starting
+        # and ending vertex states
         Hg = []
         for g in G:
             hg = g.vs[g.vcount() - 1]['H_forward']
-            if self.bidir and not decode:  # decoding never uses backward propagation
+            # decoding never uses backward propagation
+            if self.bidir and not decode:
                 hg_b = g.vs[0]['H_backward']
                 hg = torch.cat([hg, hg_b], 1)
             Hg.append(hg)
@@ -215,8 +220,9 @@ class PredictorModel(nn.Module):
     def set_encode(self, X):
         proto_batch = []
         for x in X:
+            x = x.to(self.device)
             cls_protos = self.intra_setpool(
-                x.view(-1, self.num_sample, 512)).squeeze(1)
+                x.view(-1, self.num_samples, 512)).squeeze(1)
             proto_batch.append(
                 self.inter_setpool(cls_protos.unsqueeze(0)))
         v = torch.stack(proto_batch).squeeze()
@@ -224,17 +230,22 @@ class PredictorModel(nn.Module):
 
     def graph_encode(self, G):
         # encode graphs G into latent vectors
-        if type(G) != list:
+        if not isinstance(G, list):
             G = [G]
-        self._propagate_from(G, 0, self.grue_forward, H0=self._get_zero_hidden(len(G)),
+        self._propagate_from(G, 0, self.grue_forward,
+                             H0=self._get_zero_hidden(len(G)),
                              reverse=False)
         if self.bidir:
-            self._propagate_from(G, self.max_n - 1, self.grue_backward,
-                                 H0=self._get_zero_hidden(len(G)), reverse=True)
+            self._propagate_from(G, self.max_n - 1,
+                                 self.grue_backward,
+                                 H0=self._get_zero_hidden(len(G)),
+                                 reverse=True)
         Hg = self._get_graph_state(G)
         mu = self.fc1(Hg)
-        #logvar = self.fc2(Hg)
-        return mu  # , logvar
+
+        # logvar = self.fc2(Hg)
+
+        return mu
 
     def reparameterize(self, mu, logvar, eps_scale=0.01):
         # return z ~ N(mu, std)
@@ -242,5 +253,5 @@ class PredictorModel(nn.Module):
             std = logvar.mul(0.5).exp_()
             eps = torch.randn_like(std) * eps_scale
             return eps.mul(std).add_(mu)
-        else:
-            return mu
+
+        return mu

@@ -1,7 +1,7 @@
-###########################################################################################
+###############################################################################
 # Copyright (c) Hayeon Lee, Eunyoung Hyung [GitHub MetaD2A], 2021
 # Rapid Neural Architecture Search by Learning to Generate Graphs from Datasets, ICLR 2021
-###########################################################################################
+###############################################################################
 import os
 import igraph
 import numpy as np
@@ -10,7 +10,7 @@ import torch
 
 
 def load_graph_config(graph_data_name, nvt, data_path):
-    if graph_data_name is not 'nasbench201':
+    if graph_data_name != 'nasbench201':
         raise NotImplementedError(graph_data_name)
     g_list = []
     max_n = 0  # maximum number of nodes
@@ -80,8 +80,7 @@ def decode_igraph_to_NAS201_matrix(g):
     xys = [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (3, 2)]
     for i, xy in enumerate(xys):
         m[xy[0]][xy[1]] = float(g.vs[i + 1]['type']) - 2
-    import numpy
-    return numpy.array(m)
+    return np.array(m)
 
 
 def decode_igraph_to_NAS_BENCH_201_string(g):

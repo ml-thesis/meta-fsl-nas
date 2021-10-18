@@ -2,7 +2,7 @@
 # Copyright (c) Xuanyi Dong [GitHub D-X-Y], 2019 #
 ##################################################
 # , configure2str
-from nas_bench_201.config_utils.configure_utils import load_config, dict2config
+from metanas.meta_predictor.nas_bench_201.config_utils.configure_utils import load_config, dict2config
 #from .basic_args         import obtain_basic_args
 #from .attention_args     import obtain_attention_args
 #from .random_baseline    import obtain_RandomSearch_args
