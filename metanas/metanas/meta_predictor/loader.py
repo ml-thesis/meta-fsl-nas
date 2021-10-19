@@ -1,7 +1,8 @@
-###########################################################################################
+###############################################################################
 # Copyright (c) Hayeon Lee, Eunyoung Hyung [GitHub MetaD2A], 2021
-# Rapid Neural Architecture Search by Learning to Generate Graphs from Datasets, ICLR 2021
-###########################################################################################
+# Rapid Neural Architecture Search by Learning to Generate Graphs from
+# Datasets, ICLR 2021
+###############################################################################
 import os
 
 import torch
@@ -9,8 +10,9 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
-def get_meta_train_loader(batch_size, data_path, num_sample, is_pred=False):
-    dataset = MetaTrainDatabase(data_path, num_sample, is_pred)
+def get_meta_train_loader(batch_size, data_path, num_samples,
+                          device, is_pred=False):
+    dataset = MetaTrainDatabase(data_path, num_samples, device, is_pred)
     print(f'==> The number of tasks for meta-training: {len(dataset)}')
 
     loader = DataLoader(dataset=dataset,
@@ -34,10 +36,11 @@ def get_meta_test_loader(data_path, data_name, num_class=None,
 
 
 class MetaTrainDatabase(Dataset):
-    def __init__(self, data_path, num_sample, is_pred=False):
+    def __init__(self, data_path, num_samples, device, is_pred=False):
         self.mode = 'train'
         self.acc_norm = True
-        self.num_sample = num_sample
+        self.device = device
+        self.num_samples = num_samples
         self.x = torch.load(os.path.join(data_path, 'imgnet32bylabel.pt'))
 
         if is_pred:
@@ -55,7 +58,7 @@ class MetaTrainDatabase(Dataset):
         self.acc = data['acc']
         self.task = data['task']
         self.graph = data['graph']
-        print(self.graph[0], self.graph[0].is_weighted())
+        # print(self.graph[0], self.graph[0].is_weighted())
 
         random_idx_lst = torch.load(idx_path)
         self.idx_lst = {}
@@ -83,7 +86,7 @@ class MetaTrainDatabase(Dataset):
         for cls in classes:
             cx = self.x[cls-1][0]
             ridx = torch.randperm(len(cx))
-            data.append(cx[ridx[:self.num_sample]])
+            data.append(cx[ridx[:self.num_samples]])
         x = torch.cat(data)
         if self.acc_norm:
             acc = ((acc - self.mean) / self.std) / 100.0
@@ -93,8 +96,8 @@ class MetaTrainDatabase(Dataset):
 
 
 class MetaTestDataset(Dataset):
-    def __init__(self, data_path, data_name, num_sample, num_class=None):
-        self.num_sample = num_sample
+    def __init__(self, data_path, data_name, num_samples, num_class=None):
+        self.num_samples = num_samples
         self.data_name = data_name
 
         num_class_dict = {
@@ -123,7 +126,7 @@ class MetaTestDataset(Dataset):
         for cls in classes:
             cx = self.x[cls][0]
             ridx = torch.randperm(len(cx))
-            data.append(cx[ridx[:self.num_sample]])
+            data.append(cx[ridx[:self.num_samples]])
         x = torch.cat(data)
         return x
 
