@@ -100,13 +100,10 @@ class PredictorModel(nn.Module):
     def predict(self, D_mu, G_mu):
         input_vec = []
         if 'D' in self.input_type:
-            # TODO: Configure view
-            # .view(1, 56)
             input_vec.append(D_mu)
         if 'G' in self.input_type:
             input_vec.append(G_mu)
-        # print(input_vec[0].shape,
-        #       input_vec[1].shape)
+
         input_vec = torch.cat(input_vec, dim=1)
         return self.pred_fc(input_vec)
 

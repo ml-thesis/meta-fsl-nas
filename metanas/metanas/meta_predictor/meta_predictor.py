@@ -156,17 +156,15 @@ class MetaPredictor:
     def evaluate_architecture(self, dataset, architecture):
         """Meta-training evaluation for the RL environment
         """
-        print(dataset.shape)
-        dataset = [dataset.view(1, self.config.hs).to(self.device)]
+        dataset = [dataset.to(self.device)]
         architecture = [architecture]
 
         self.model.eval()
 
         with torch.no_grad():
-            D = self.model.set_encode(dataset)
+            D = self.model.set_encode(dataset).unsqueeze(0)
             G = self.model.graph_encode(architecture)
+
             y_pred = self.model.predict(D, G)
 
-            print(y_pred)
-
-            return y_pred
+        return y_pred
