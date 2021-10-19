@@ -1,4 +1,4 @@
-from nas_bench_201.architecture import train_single_model
+from metanas.meta_predictor.nas_bench_201.architecture import train_single_model
 from pathlib import Path
 import sys
 
