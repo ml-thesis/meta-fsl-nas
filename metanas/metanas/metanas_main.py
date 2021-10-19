@@ -76,8 +76,7 @@ def meta_architecture_search(
         from metanas.tasks.torchmeta_loader import (
             OmniglotFewShot,
             MiniImageNetFewShot as miniImageNetFewShot,
-            TripleMNISTFewShot,
-            MixedOmniglotTripleMNISTFewShot
+            TripleMNISTFewShot
         )
     else:
         raise RuntimeError("Other data loaders deprecated.")
@@ -88,8 +87,6 @@ def meta_architecture_search(
         task_distribution_class = miniImageNetFewShot
     elif config.dataset == "triplemnist":
         task_distribution_class = TripleMNISTFewShot
-    elif config.dataset == "mixedomniglottriplemnist":
-        task_distribution_class = MixedOmniglotTripleMNISTFewShot
     else:
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
