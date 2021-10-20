@@ -7,9 +7,7 @@ Logs to a tab-separated-values file (path/to/output_directory/progress.txt)
 """
 import json
 import joblib
-import shutil
 import numpy as np
-import tensorflow as tf
 import torch
 import os.path as osp
 import time
@@ -50,45 +48,16 @@ def colorize(string, color, bold=False, highlight=False):
     return '\x1b[%sm%s\x1b[0m' % (';'.join(attr), string)
 
 
-def restore_tf_graph(sess, fpath):
-    """
-    Loads graphs saved by Logger.
-
-    Will output a dictionary whose keys and values are from the 'inputs' 
-    and 'outputs' dict you specified with logger.setup_tf_saver().
-
-    Args:
-        sess: A Tensorflow session.
-        fpath: Filepath to save directory.
-
-    Returns:
-        A dictionary mapping from keys to tensors in the computation graph
-        loaded from ``fpath``.
-    """
-    tf.saved_model.loader.load(
-        sess,
-        [tf.saved_model.tag_constants.SERVING],
-        fpath
-    )
-    model_info = joblib.load(osp.join(fpath, 'model_info.pkl'))
-    graph = tf.get_default_graph()
-    model = dict()
-    model.update({k: graph.get_tensor_by_name(v)
-                  for k, v in model_info['inputs'].items()})
-    model.update({k: graph.get_tensor_by_name(v)
-                  for k, v in model_info['outputs'].items()})
-    return model
-
-
 class Logger:
     """
     A general-purpose logger.
 
-    Makes it easy to save diagnostics, hyperparameter configurations, the 
-    state of a training run, and the trained model.
+    Makes it easy to save diagnostics, hyperparameter configurations,
+    the state of a training run, and the trained model.
     """
 
-    def __init__(self, output_dir=None, output_fname='progress.txt', exp_name=None):
+    def __init__(self, output_dir=None, output_fname='progress.txt',
+                 exp_name=None):
         """
         Initialize a Logger.
 
@@ -186,11 +155,11 @@ class Logger:
         To be clear: this is about saving *state*, not logging diagnostics.
         All diagnostic logging is separate from this function. This function
         will save whatever is in ``state_dict``---usually just a copy of the
-        environment---and the most recent parameters for the model you 
+        environment---and the most recent parameters for the model you
         previously set up saving for with ``setup_tf_saver``. 
 
         Call with any frequency you prefer. If you only want to maintain a
-        single state and overwrite it at each call with the most recent 
+        single state and overwrite it at each call with the most recent
         version, leave ``itr=None``. If you want to keep all of the states you
         save, provide unique (increasing) values for 'itr'.
 
@@ -206,58 +175,15 @@ class Logger:
                 joblib.dump(state_dict, osp.join(self.output_dir, fname))
             except:
                 self.log('Warning: could not pickle state_dict.', color='red')
-            if hasattr(self, 'tf_saver_elements'):
-                self._tf_simple_save(itr)
             if hasattr(self, 'pytorch_saver_elements'):
                 self._pytorch_simple_save(itr)
-
-    def setup_tf_saver(self, sess, inputs, outputs):
-        """
-        Set up easy model saving for tensorflow.
-
-        Call once, after defining your computation graph but before training.
-
-        Args:
-            sess: The Tensorflow session in which you train your computation
-                graph.
-
-            inputs (dict): A dictionary that maps from keys of your choice
-                to the tensorflow placeholders that serve as inputs to the 
-                computation graph. Make sure that *all* of the placeholders
-                needed for your outputs are included!
-
-            outputs (dict): A dictionary that maps from keys of your choice
-                to the outputs from your computation graph.
-        """
-        self.tf_saver_elements = dict(
-            session=sess, inputs=inputs, outputs=outputs)
-        self.tf_saver_info = {'inputs': {k: v.name for k, v in inputs.items()},
-                              'outputs': {k: v.name for k, v in outputs.items()}}
-
-    def _tf_simple_save(self, itr=None):
-        """
-        Uses simple_save to save a trained model, plus info to make it easy
-        to associated tensors to variables after restore. 
-        """
-        if proc_id() == 0:
-            assert hasattr(self, 'tf_saver_elements'), \
-                "First have to setup saving with self.setup_tf_saver"
-            fpath = 'tf1_save' + ('%d' % itr if itr is not None else '')
-            fpath = osp.join(self.output_dir, fpath)
-            if osp.exists(fpath):
-                # simple_save refuses to be useful if fpath already exists,
-                # so just delete fpath if it's there.
-                shutil.rmtree(fpath)
-            tf.saved_model.simple_save(
-                export_dir=fpath, **self.tf_saver_elements)
-            joblib.dump(self.tf_saver_info, osp.join(fpath, 'model_info.pkl'))
 
     def setup_pytorch_saver(self, what_to_save):
         """
         Set up easy model saving for a single PyTorch model.
 
         Because PyTorch saving and loading is especially painless, this is
-        very minimal; we just need references to whatever we would like to 
+        very minimal; we just need references to whatever we would like to
         pickle. This is integrated into the logger because the logger
         knows where the user would like to save information about this
         training run.
@@ -354,7 +280,7 @@ class EpochLogger(Logger):
         """
         Save something into the epoch_logger's current state.
 
-        Provide an arbitrary number of keyword arguments with numerical 
+        Provide an arbitrary number of keyword arguments with numerical
         values.
         """
         for k, v in kwargs.items():
@@ -362,7 +288,8 @@ class EpochLogger(Logger):
                 self.epoch_dict[k] = []
             self.epoch_dict[k].append(v)
 
-    def log_tabular(self, key, val=None, with_min_and_max=False, average_only=False):
+    def log_tabular(self, key, val=None, with_min_and_max=False,
+                    average_only=False):
         """
         Log a value or possibly the mean/std/min/max values of a diagnostic.
 
