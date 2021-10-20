@@ -20,7 +20,7 @@ def init_config():
         seed=42,
         use_hp_settting=1,
         workers=1,
-        gpus="1",
+        gpus="0",
         test_adapt_steps=1.0,
         n=5,
         k=20,

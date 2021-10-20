@@ -95,6 +95,8 @@ def meta_architecture_search(
         config.primitives = gt.PRIMITIVES_FEWSHOT
     elif config.primitives_type == "sharp":
         config.primitives = gt.PRIMITIVES_SHARP
+    elif config.primitives_type == "nasbench201":
+        config.primitives = gt.PRIMITIVES_NAS_BENCH_201
     else:
         raise RuntimeError(
             f"This f{config.primitives_type} set is not supported.")
@@ -1039,11 +1041,11 @@ if __name__ == "__main__":
                         help="Either scalar or max_w")
 
     parser.add_argument("--primitives_type", default="fewshot",
-                        help="Either fewshot or sharp")
+                        help="Either fewshot, nasbench201 or sharp")
 
     parser.add_argument("--use_cosine_power_annealing", action="store_true")
 
-    # reinit didn't perform well
+    # Reinit doesn't perform well
     parser.add_argument("--use_reinitialize_model", action="store_true")
 
     # Architectures
@@ -1119,11 +1121,6 @@ if __name__ == "__main__":
     parser.add_argument("--agent", default="random",
                         help="random / sac")
 
-    parser.add_argument(
-        "--use_rew_estimation",
-        action="store_true",
-        help="Use meta_predictor for the env reward estimation")
-
     parser.add_argument("--agent_hidden_size",
                         type=int,
                         default=None)
@@ -1136,9 +1133,29 @@ if __name__ == "__main__":
                         type=int,
                         default=1000)
 
-    # MetaD2A reward estimation for the RL environment
+    # MetaD2A settings
+    # reward estimation for the RL environment
+    parser.add_argument("--rew_model_path",
+                        default='/home/rob/Git/meta-fsl-nas/metanas/results/predictor/predictor_max_corr.pt')
+    parser.add_argument("--rew_data_path",
+                        default='/home/rob/Git/meta-fsl-nas/data/predictor')
+
+    parser.add_argument(
+        "--use_rew_estimation",
+        action="store_true",
+        help="Use meta_predictor for the env reward estimation")
 
     args = parser.parse_args()
+
+    # TODO: Make configureable
+    # num_samples in few-shot setting, n*k
+    args.num_samples = 20
+    # the graph data used, nas-bench-201
+    args.graph_data_name = 'nasbench201'
+    args.nvt = 7
+    args.hs = 56
+    args.nz = 56
+
     args.path = os.path.join(
         args.path, ""
     )  # add file separator at end if it does not exist

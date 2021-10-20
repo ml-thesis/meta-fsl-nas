@@ -22,36 +22,49 @@ class MetaPredictor:
     def __init__(self, config):
         self.config = config
         self.device = self.config.device
-        self.batch_size = config.batch_size
         self.num_samples = config.num_samples
-        self.epochs = config.epochs
 
-        self.save_epoch = config.save_epoch
-        self.model_path = config.model_path
-        self.save_path = config.save_path
-        self.data_path = config.data_path
-        self.logger = config.logger
-        self.meta_test = config.meta_test
+        # self.logger = config.logger
+        self.meta_test = config.use_rew_estimation
         self.max_corr_dict = {'corr': -1, 'epoch': -1}
-
-        # NAS_bench 201 graph configuration
-        graph_config = load_graph_config(
-            config.graph_data_name, config.nvt, config.data_path)
-
-        # Load predictor model
-        self.model = PredictorModel(config, graph_config).to(self.device)
-
-        # If model path is given, load pretrained model
-        if config.model_path is not None:
-            load_pretrained_model(self.model_path, self.model)
 
         # Test when used as discrete estimate on the RL environment
         # TODO: Stoch or discrete sampling
         if self.meta_test:
-            self.data_name = config.data_name
-            self.num_class = config.num_class
-            self.load_epoch = config.load_epoch
+            self.model_path = config.rew_model_path
+            self.data_path = config.rew_data_path
+
+            # NAS_bench 201 graph configuration
+            graph_config = load_graph_config(
+                config.graph_data_name, config.nvt, self.data_path)
+
+            # Load predictor model
+            self.model = PredictorModel(config, graph_config).to(self.device)
+
+            # If model path is given, load pretrained model
+            if self.model_path is not None:
+                load_pretrained_model(self.model_path, self.model)
+
         else:
+            # NAS_bench 201 graph configuration
+            graph_config = load_graph_config(
+                config.graph_data_name, config.nvt, config.data_path)
+
+            # Load predictor model
+            self.model = PredictorModel(config, graph_config).to(self.device)
+
+            # If model path is given, load pretrained model
+            if self.model_path is not None:
+                load_pretrained_model(self.model_path, self.model)
+
+            self.epochs = config.epochs
+            self.batch_size = config.batch_size
+            self.save_epoch = config.save_epoch
+
+            self.model_path = config.model_path
+            self.data_path = config.data_path
+            self.save_path = config.save_path
+
             self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr)
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer, 'min',
@@ -98,8 +111,8 @@ class MetaPredictor:
             max_loss = self.max_corr_dict['loss']
             max_corr = self.max_corr_dict['corr']
             self.logger.info(
-                f"Train epoch: {epoch:3d} "
-                f"validation loss: {loss:.6f} ({max_loss:.6f})"
+                f"Validation epoch: {epoch:3d} "
+                f"validation loss: {loss:.6f} ({max_loss:.6f}) "
                 f"max correlation correlation: {corr:.4f} ({max_corr:.4f})"
             )
 

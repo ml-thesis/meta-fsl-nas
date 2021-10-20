@@ -3,14 +3,15 @@ import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
 
-import math
-import copy
-import time
 import gym
+import math
+import time
+import igraph
 from gym import spaces
 
-from metanas.utils import utils
+from metanas.meta_predictor.meta_predictor import MetaPredictor
 import metanas.utils.genotypes as gt
+from metanas.utils import utils
 
 
 """Wrapper for the RL agent to interact with the meta-model in the outer-loop
@@ -36,9 +37,9 @@ class NasEnv(gym.Env):
         self.test_phase = test_phase
         self.meta_model = meta_model
 
-        # TODO: Task reward estimator
-        # self.meta_predictor
-        self.meta_epoch = 0
+        # Task reward estimator
+        if self.reward_estimation:
+            self.meta_predictor = MetaPredictor(config)
 
         # The task is set in the meta-loop
         self.current_task = None
@@ -52,7 +53,7 @@ class NasEnv(gym.Env):
         # Set baseline accuracy to scale the reward
         self.baseline_acc = 0
 
-        # Initialize State/Observation space
+        # Initialize State / Observation space
         # Intermediate + input nodes
         self.n_nodes = self.config.nodes + 2
 
@@ -214,7 +215,6 @@ class NasEnv(gym.Env):
 
     def increase_op(self, row_idx, edge_idx, op_idx, prob=0.3):
         C = math.log(10.)
-        # self.calculate_C_term(self.alphas[row_idx][edge_idx])
 
         # Set short-hands
         curr_op = self.normalized_alphas[row_idx][edge_idx][op_idx]
@@ -238,7 +238,8 @@ class NasEnv(gym.Env):
             # Set the meta-model, update the env state in
             # self.update_states()
             with torch.no_grad():
-                self.meta_model.alpha_normal[row_idx][edge_idx] = self._inverse_softmax(
+                self.meta_model.alpha_normal[
+                    row_idx][edge_idx] = self._inverse_softmax(
                     curr_edge, C)
 
             # True if state is mutated
@@ -269,7 +270,8 @@ class NasEnv(gym.Env):
                 curr_edge += 0.01
 
             with torch.no_grad():
-                self.meta_model.alpha_normal[row_idx][edge_idx] = self._inverse_softmax(
+                self.meta_model.alpha_normal[
+                    row_idx][edge_idx] = self._inverse_softmax(
                     curr_edge, C)
 
             # True if state is mutated
@@ -490,6 +492,8 @@ class NasEnv(gym.Env):
         # [0, 1]
         reward = 0
 
+        print(self.baseline_acc, accuracy)
+
         # Else, the reward is 0
         if self.baseline_acc == accuracy:
             return 0.0
@@ -541,4 +545,92 @@ class NasEnv(gym.Env):
         return reward
 
     def _meta_predictor_estimation(self, task):
-        return NotImplemented
+
+        # TODO: Use genotype function from meta_model possibly
+        geno = parse(self.normalized_alphas, k=2,
+                     primitives=gt.PRIMITIVES_NAS_BENCH_201)
+
+        # Convert genotype to graph
+        # n_edges = sum([len(x) for x in geno])
+        edges = []
+
+        # TODO: Intermediary solution
+        connections = [[1],
+                       [1, 0],
+                       [0, 1, 0],
+                       [1, 0, 0, 0],
+                       [0, 1, 0, 0, 0],
+                       [0, 0, 1, 1, 0, 0],
+                       [0, 0, 0, 0, 1, 1, 1]]
+
+        start_node = [0]
+        edges.append(start_node)
+        index = 0
+
+        for node in geno:
+            for op, _ in node:
+                # plus two, to not confuse the
+                # start node and end node
+                op = [self.primitives.index(op) + 2]
+                op.extend(connections[index])
+                edges.append(op)
+                index += 1
+
+        stop_node = [1]
+        stop_node.extend(connections[-1])
+        edges.append(stop_node)
+
+        graph, _ = decode_metad2a_to_igraph(edges)
+
+        # Get num_samples, n_train * k
+        # TODO: Should be testing dataset?
+        train_y, _ = next(iter(task.train_loader))
+        assert train_y.shape[0] == self.config.num_samples, "Number of samples should equal training of meta_predictor"
+
+        # TODO: Double check paper (32x32)
+        dataset = F.interpolate(train_y, size=(32, 16)).view(-1, 512)
+
+        y_pred = self.meta_predictor.evaluate_architecture(
+            dataset, graph
+        )
+        print(y_pred.item())
+        return y_pred.item()
+
+
+def decode_metad2a_to_igraph(row):
+    if isinstance(row, str):
+        row = eval(row)
+    n = len(row)
+
+    g = igraph.Graph(directed=True)
+    g.add_vertices(n)
+
+    for i, node in enumerate(row):
+        g.vs[i]['type'] = node[0]
+
+        if i < (n - 2) and i > 0:
+            g.add_edge(i, i + 1)  # always connect from last node
+        for j, edge in enumerate(node[1:]):
+            if edge == 1:
+                g.add_edge(j, i)
+    return g, n
+
+
+def parse(alpha, k, primitives=gt.PRIMITIVES_NAS_BENCH_201):
+    gene = []
+    for edges in alpha:
+        edge_max, primitive_indices = torch.topk(
+            edges[:, :], 1
+        )
+
+        topk_edge_values, topk_edge_indices = torch.topk(
+            edge_max.view(-1), k)
+
+        node_gene = []
+        for edge_idx in topk_edge_indices:
+            prim_idx = primitive_indices[edge_idx]
+            prim = primitives[prim_idx]
+            node_gene.append((prim, edge_idx.item()))
+
+        gene.append(node_gene)
+    return gene
