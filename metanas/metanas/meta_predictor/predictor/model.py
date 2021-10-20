@@ -100,19 +100,21 @@ class PredictorModel(nn.Module):
     def predict(self, D_mu, G_mu):
         input_vec = []
         if 'D' in self.input_type:
-            # TODO: Configure view
-            # .view(1, 56)
             input_vec.append(D_mu)
         if 'G' in self.input_type:
             input_vec.append(G_mu)
-        # print(input_vec[0].shape,
-        #       input_vec[1].shape)
+
         input_vec = torch.cat(input_vec, dim=1)
         return self.pred_fc(input_vec)
 
+    def get_device(self):
+        if self.device is None:
+            self.device = next(self.parameters()).device
+        return self.device
+
     def _get_zeros(self, n, length):
         # get a zero hidden state
-        return torch.zeros(n, length).to(self.device)
+        return torch.zeros(n, length).to(self.get_device())
 
     def _get_zero_hidden(self, n=1):
         return self._get_zeros(n, self.hs)  # get a zero hidden state
@@ -123,11 +125,11 @@ class PredictorModel(nn.Module):
                 return None
             idx = torch.LongTensor(idx).unsqueeze(0).t()
             x = torch.zeros((len(idx), length)).scatter_(
-                1, idx, 1).to(self.device)
+                1, idx, 1).to(self.get_device())
         else:
             idx = torch.LongTensor([idx]).unsqueeze(0)
             x = torch.zeros((1, length)).scatter_(
-                1, idx, 1).to(self.device)
+                1, idx, 1).to(self.get_device())
         return x
 
     def _gated(self, h, gate, mapper):

@@ -1,8 +1,9 @@
 ###############################################################################
 # Copyright (c) Hayeon Lee, Eunyoung Hyung [GitHub MetaD2A], 2021
-# Rapid Neural Architecture Search by Learning to Generate Graphs from Datasets, ICLR 2021
+# Rapid Neural Architecture Search by Learning to Generate Graphs from
+# Datasets, ICLR 2021
 ###############################################################################
-import os
+
 import numpy as np
 from tqdm import tqdm
 from scipy.stats import pearsonr
@@ -28,13 +29,10 @@ class MetaPredictor:
         self.save_epoch = config.save_epoch
         self.model_path = config.model_path
         self.save_path = config.save_path
-        self.model_path = config.model_path
         self.data_path = config.data_path
         self.logger = config.logger
-        self.test = config.test
-
+        self.meta_test = config.meta_test
         self.max_corr_dict = {'corr': -1, 'epoch': -1}
-        self.train_arch = config.train_arch
 
         # NAS_bench 201 graph configuration
         graph_config = load_graph_config(
@@ -42,20 +40,19 @@ class MetaPredictor:
 
         # Load predictor model
         self.model = PredictorModel(config, graph_config).to(self.device)
+
+        # If model path is given, load pretrained model
         if config.model_path is not None:
             load_pretrained_model(self.model_path, self.model)
 
-        # TODO: Check if needed
-        # self.nasbench201 = torch.load(
-        #     os.path.join(self.data_path, 'nasbench201.pt'))
-
-        # Test when used as discrete estimate on the RL environment?
-        if self.test:
+        # Test when used as discrete estimate on the RL environment
+        # TODO: Stoch or discrete sampling
+        if self.meta_test:
             self.data_name = config.data_name
             self.num_class = config.num_class
             self.load_epoch = config.load_epoch
         else:
-            self.optimizer = optim.Adam(self.model.parameters(), lr=1e-4)
+            self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr)
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer, 'min',
                 factor=0.1,
@@ -63,16 +60,20 @@ class MetaPredictor:
                 verbose=True)
 
             self.mtrloader = get_meta_train_loader(
-                self.batch_size, self.data_path, self.num_samples, is_pred=True)
+                self.batch_size,
+                self.data_path,
+                self.num_samples,
+                self.device,
+                is_pred=True)
+
             self.acc_mean = self.mtrloader.dataset.mean
             self.acc_std = self.mtrloader.dataset.std
 
     def forward(self, dataset, arch):
-        D_mu = self.model.set_encode(dataset)
+        D_mu = self.model.set_encode(dataset.to(self.device))
         G_mu = self.model.graph_encode(arch)
 
-        y_pred = self.model.predict(D_mu, G_mu)
-        return y_pred
+        return self.model.predict(D_mu, G_mu)
 
     def meta_train(self):
         for epoch in range(1, self.epochs+1):
@@ -86,12 +87,12 @@ class MetaPredictor:
                 f"meta-training correlation: {corr:.4f}"
             )
 
-            valoss, vacorr = self.meta_validation(epoch)
+            valoss, vacorr = self.meta_validation()
             if self.max_corr_dict['corr'] < vacorr:
                 self.max_corr_dict['corr'] = vacorr
                 self.max_corr_dict['epoch'] = epoch
                 self.max_corr_dict['loss'] = valoss
-                save_model(self.model_path, self.model, epoch, max_corr=True)
+                save_model(self.save_path, self.model, epoch, max_corr=True)
 
             # self.config.logger print pred log validation
             max_loss = self.max_corr_dict['loss']
@@ -103,9 +104,10 @@ class MetaPredictor:
             )
 
             if epoch % self.save_epoch == 0:
-                save_model(self.model_path, self.model, epoch)
+                save_model(self.save_path, self.model, epoch)
 
     def meta_train_epoch(self):
+        self.model.to(self.device)
         self.model.train()
         self.mtrloader.dataset.set_mode('train')
         N = len(self.mtrloader.dataset)
@@ -114,6 +116,7 @@ class MetaPredictor:
         y_all, y_pred_all = [], []
 
         for x, g, acc in tqdm(self.mtrloader):
+
             self.optimizer.zero_grad()
             y_pred = self.forward(x, g)
             y = acc.to(self.device)
@@ -156,17 +159,14 @@ class MetaPredictor:
     def evaluate_architecture(self, dataset, architecture):
         """Meta-training evaluation for the RL environment
         """
-        print(dataset.shape)
-        dataset = [dataset.view(1, self.config.hs).to(self.device)]
+        dataset = [dataset.to(self.device)]
         architecture = [architecture]
 
         self.model.eval()
 
         with torch.no_grad():
-            D = self.model.set_encode(dataset)
+            D = self.model.set_encode(dataset).unsqueeze(0)
             G = self.model.graph_encode(architecture)
             y_pred = self.model.predict(D, G)
 
-            print(y_pred)
-
-            return y_pred
+        return y_pred

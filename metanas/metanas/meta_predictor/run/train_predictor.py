@@ -1,71 +1,105 @@
 import os
+import igraph
 import argparse
 
 import torch
 
+from metanas.meta_predictor.loader import MetaTestDataset
 from metanas.meta_predictor.meta_predictor import MetaPredictor
 from metanas.utils import utils
+
+
+def decode_metad2a_to_igraph(row):
+    if isinstance(row, str):
+        row = eval(row)  # convert string to list of lists
+    n = len(row)
+
+    g = igraph.Graph(directed=True)
+    g.add_vertices(n)
+
+    for i, node in enumerate(row):
+        g.vs[i]['type'] = node[0]
+
+        if i < (n - 2) and i > 0:
+            g.add_edge(i, i + 1)  # always connect from last node
+        for j, edge in enumerate(node[1:]):
+            if edge == 1:
+                g.add_edge(j, i)
+    return g, n
 
 
 def main(config):
     meta_pred = MetaPredictor(config)
     meta_pred.meta_train()
 
+    # dataset = MetaTestDataset(
+    #     config.data_path,
+    #     'mnist',
+    #     config.num_samples,
+    #     config.num_class)
+
+    # m = "[[0], [6, 1], [4, 1, 0], [3, 0, 1, 0], [4, 1, 0, 0, 0], [3, 0, 1, 0, 0, 0], [3, 0, 0, 1, 1, 0, 0], [1, 0, 0, 0, 0, 1, 1, 1]]"
+    # graph, _ = decode_metad2a_to_igraph(m)
+
+    # y_pred = meta_pred.evaluate_architecture(dataset[0], graph)
+    # print(y_pred)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--name", required=True)
+    parser.add_argument('--path', required=True)
     parser.add_argument("--seed", type=int, default=42, help="random seed")
-    parser.add_argument('--gpus', type=str, default='0',
-                        help='set visible gpus')
-    parser.add_argument("--name", type=str, default="meta_predictor_test")
-    parser.add_argument('--model_path', type=str, default=None,
+    parser.add_argument(
+        '--gpus',
+        type=str,
+        default='0',
+        help="gpu device ids separated by comma. " "`all` indicates use all"
+        " gpus.",
+    )
+    parser.add_argument("--meta_test", action="store_true",
+                        help="Whether in meta-testing stage")
+    parser.add_argument('--model_path', default=None,
                         help='select model')
-    parser.add_argument('--path', type=str,
-                        default='/home/rob/Git/meta-fsl-nas/metanas/results/predictor/')
+    parser.add_argument('--data_path')
+    parser.add_argument('--save_path')
 
-    parser.add_argument('--save-path', type=str,
-                        default='results', help='the path of save directory')
-    parser.add_argument('--data-path', type=str,
-                        default='/home/rob/Git/meta-fsl-nas/data/predictor', help='the path of save directory')
-    parser.add_argument('--save-epoch', type=int, default=20,
-                        help='how many epochs to wait each time to save model states')
+    # Training parameters
+    parser.add_argument('--lr', default=1e-4,
+                        help='the learning rate of the predictor')
+    parser.add_argument('--save_epoch', type=int, default=20,
+                        help='save model every n epochs')
     parser.add_argument('--epochs', type=int, default=400,
                         help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='batch size for generator')
-    parser.add_argument('--graph-data-name',
+
+    parser.add_argument('--graph_data_name',
                         default='nasbench201', help='graph dataset name')
-    parser.add_argument('--nvt', type=int, default=7,
-                        help='number of different node types, 7: NAS-Bench-201 including in/out node')
-    # set encoder
-    parser.add_argument('--num-samples', type=int, default=1,
+    parser.add_argument(
+        '--nvt',
+        type=int,
+        default=7,
+        help="number of different node types "
+        "7: NAS-Bench-201 including in/out node",
+    )
+
+    # Set encoder
+    parser.add_argument('--num_samples', type=int, default=20,
                         help='the number of images as input for set encoder')
-    # graph encoder
+    parser.add_argument('--num_class', type=int, default=5,
+                        help='the number of class of dataset')
+
+    # Graph encoder
     parser.add_argument('--hs', type=int, default=56,
                         help='hidden size of GRUs')
     parser.add_argument('--nz', type=int, default=56,
                         help='the number of dimensions of latent vectors z')
-    # test
-    parser.add_argument('--test', action='store_true',
-                        default=False, help='turn on test mode')
-    parser.add_argument('--load-epoch', type=int, default=20,
-                        help='checkpoint epoch loaded for meta-test')
-    parser.add_argument('--data-name', type=str,
-                        default=None, help='meta-test dataset name')
-    parser.add_argument('--num-class', type=int, default=5,
-                        help='the number of class of dataset')
-    parser.add_argument('--num-gen-arch', type=int, default=800,
-                        help='the number of candidate architectures generated by the generator')
-    parser.add_argument('--train-arch', action="store_true",
-                        help='whether to train the searched architecture')
-
     args = parser.parse_args()
 
     # Set up device
     args.gpus = utils.parse_gpus(args.gpus)
     args.device = torch.device("cuda")
-
-    print(args.path, args.name)
 
     # Logging
     logger = utils.get_logger(os.path.join(args.path, f"{args.name}.log"))

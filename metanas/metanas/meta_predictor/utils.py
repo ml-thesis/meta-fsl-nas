@@ -1,6 +1,7 @@
 ###############################################################################
 # Copyright (c) Hayeon Lee, Eunyoung Hyung [GitHub MetaD2A], 2021
-# Rapid Neural Architecture Search by Learning to Generate Graphs from Datasets, ICLR 2021
+# Rapid Neural Architecture Search by Learning to Generate Graphs from
+# Datasets, ICLR 2021
 ###############################################################################
 import os
 import igraph
@@ -39,17 +40,17 @@ def load_pretrained_model(model_path, model):
     model.load_state_dict(state)
 
 
-def save_model(model_path, model, epoch, max_corr=None):
+def save_model(save_path, model, epoch, max_corr=None):
     if max_corr is not None:
         torch.save(model.cpu().state_dict(),
-                   os.path.join(model_path, 'predictor_max_corr.pt'))
+                   os.path.join(save_path, 'predictor_max_corr.pt'))
     else:
         torch.save(model.cpu().state_dict(),
-                   os.path.join(model_path, f'predictor_{epoch}.pt'))
+                   os.path.join(save_path, f'predictor_{epoch}.pt'))
 
 
 def decode_NAS_BENCH_201_8_to_igraph(row):
-    if type(row) == str:
+    if isinstance(row, str):
         row = eval(row)  # convert string to list of lists
     n = len(row)
     g = igraph.Graph(directed=True)
@@ -108,11 +109,3 @@ def is_valid_DAG(g, START_TYPE=0, END_TYPE=1):
         if v.outdegree() == 0 and v['type'] != END_TYPE:
             return False
     return res and n_start == 1 and n_end == 1
-
-
-def mean_confidence_interval(data, confidence=0.95):
-    a = 1.0 * np.array(data)
-    n = len(a)
-    m, se = np.mean(a), scipy.stats.sem(a)
-    h = se * scipy.stats.t.ppf((1 + confidence) / 2., n-1)
-    return m, h

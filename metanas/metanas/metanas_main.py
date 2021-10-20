@@ -76,8 +76,7 @@ def meta_architecture_search(
         from metanas.tasks.torchmeta_loader import (
             OmniglotFewShot,
             MiniImageNetFewShot as miniImageNetFewShot,
-            TripleMNISTFewShot,
-            MixedOmniglotTripleMNISTFewShot
+            TripleMNISTFewShot
         )
     else:
         raise RuntimeError("Other data loaders deprecated.")
@@ -88,8 +87,6 @@ def meta_architecture_search(
         task_distribution_class = miniImageNetFewShot
     elif config.dataset == "triplemnist":
         task_distribution_class = TripleMNISTFewShot
-    elif config.dataset == "mixedomniglottriplemnist":
-        task_distribution_class = MixedOmniglotTripleMNISTFewShot
     else:
         raise RuntimeError(f"Dataset {config.dataset} is not supported.")
 
@@ -1118,14 +1115,6 @@ if __name__ == "__main__":
         "during final evaluation.",
     )  # deprecated
 
-    # Meta-predictor variables
-    # model_name, save_path, save_epoch, max_epoch, batch_size, graph_data_name
-    # nvt, num_samples, hs, nz, test, load_epoch, data_name, num_class
-    # num_gen_arch, train_arch, model_path (with adjustments)
-    # parser.add_argument(
-
-    # )
-
     # Meta-RL agent settings
     parser.add_argument("--agent", default="random",
                         help="random / sac")
@@ -1147,6 +1136,8 @@ if __name__ == "__main__":
                         type=int,
                         default=1000)
 
+    # MetaD2A reward estimation for the RL environment
+
     args = parser.parse_args()
     args.path = os.path.join(
         args.path, ""
@@ -1154,7 +1145,6 @@ if __name__ == "__main__":
     args.plot_path = os.path.join(args.path, "plots")
 
     # Setup data and hardware config
-    # config.data_path = "datafiles"
     args.gpus = utils.parse_gpus(args.gpus)
     args.device = torch.device("cuda")
 
