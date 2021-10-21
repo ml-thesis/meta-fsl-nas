@@ -61,6 +61,7 @@ do
         --use_torchmeta_loader \
 
         # Custom DARTS adjustments
+        --primitives_type nasbench201 \
         --dropout_skip_connections \
 
         # Default M=2,
@@ -68,12 +69,14 @@ do
 
         # meta-RL agent
         # Warm-up pre-trained,
-        --model_path ${MODEL_PATH} \
+        # --model_path ${MODEL_PATH} \
 
         --agent ${AGENT} \
         --agent_hidden_size 256 \
         --agent_update_every 20 \
-        --agent_update_after 400
+        --agent_update_after 400 \
+
+        --use_rew_estimation
     )
 
     python -u -m metanas.metanas_main "${args[@]}"

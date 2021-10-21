@@ -32,7 +32,7 @@ def load_graph_config(graph_data_name, nvt, data_path):
 
 
 def load_pretrained_model(model_path, model):
-    model_path, name = os.path.split(model_path)
+    path, name = os.path.split(model_path)
     assert name, "Specify the full path for argument 'model_path'."
     print(f"Loading pretrained model from {model_path}")
 

@@ -62,6 +62,22 @@ OPS = {
     ),
 }
 
+
+OPS_NAS_BENCH_201 = {
+    'none': lambda C, stride, affine: Zero(stride),
+    'skip_connect': lambda C, stride, affine: Identity()
+    if stride == 1
+    else FactorizedReduce(C, C, affine=affine),
+    'nor_conv_1x1': lambda C, stride, affine: StdConv(
+        C, C, 1, stride, 0, affine=affine),
+    'nor_conv_3x3': lambda C, stride, affine: StdConv(
+        C, C, 3, stride, 1, affine=affine),
+    'avg_pool_3x3': lambda C, stride, affine: PoolBN(
+        "avg", C, 3, stride, 1, affine=affine
+    ),
+}
+
+
 OPS_SHARPDARTS = {
     'none': lambda C, stride, affine: Zero(stride),
     'avg_pool_3x3': lambda C, stride, affine: ResizablePool(
@@ -356,6 +372,8 @@ class MixedOp(nn.Module):
                 op = OPS_SHARPDARTS[primitive](C, stride, affine=False)
             elif primitive_space == "fewshot":
                 op = OPS[primitive](C, stride, affine=False)
+            elif primitive_space == "nasbench201":
+                op = OPS_NAS_BENCH_201[primitive](C, stride, affine=False)
             else:
                 raise RuntimeError("Primitive space is not supported.")
 

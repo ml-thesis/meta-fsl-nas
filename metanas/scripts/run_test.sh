@@ -25,7 +25,7 @@ args=(
     # few shot params
     # examples per class
     --n 1 \
-    # number classes  
+    # number classes
     --k 20 \
     # test examples per class
     --q 1 \
